@@ -5,7 +5,7 @@
 ;; Authors:  Christian Ridderström <christian.ridderstrom@home.se>, Lukasz Stafiniak <lukstafi@gmail.com>
 ;; Maintainer: Lukasz Stafiniak <lukstafi@gmail.com>
 ;; Release: $Name:  $
-;; Revision: $Revision: 1.10 $
+;; Revision: $Revision: 1.21 $
 ;; Keywords: hypermedia
 ;; URI: http://www.pmwiki.org/wiki/EmacsModes/Pmwiki-mode
 ;; 
@@ -30,12 +30,6 @@
 ;; Boston, MA 02111-1307, USA.
 ;;
 ;;; Commentary:
-;;
-;; Changelog:
-;;
-;; v0.1: (2007/01/28) first release: no CamelCase; anchor links
-;; v0.2: (2007/01/29) follow URI support, link shortcuts
-;; v0.3: (2007/01/31) `mmm-mode' support, `preview-latex' works
 ;;
 ;; Background:
 ;;
@@ -216,6 +210,7 @@ Used for compatibility among different emacs variants."
 (require 'http-get)
 (require 'http-post)
 (require 'cl)				; Defines caddr etc
+(require 'easymenu)
 (if pmwiki-running-xemacs
     (require 'mule))	     ; Defines encode-coding-string for xemacs
 ;;
@@ -293,7 +288,8 @@ multibyte characters."
 (defvar pmwiki-base-pattern
   (concat "\\(" pmwiki-HTTP-pattern "//[^/?]+\\)\\(/?\\)$\\|"
 	  "\\(" pmwiki-HTTP-pattern ".+?\\)\\(\\?n=\\|\\?pagename=\\)\\|"
-	  "\\(" pmwiki-HTTP-pattern ".+\\)\\(/\\)[^/?.]+[/.][^/?.#]*\\($\\|#.*\\)\\|"
+	  "\\(" pmwiki-HTTP-pattern
+	  ".+\\)\\(/\\)[^/?.]+[/.][^/?.#]*\\($\\|#.*\\)\\|"
 	  "\\(" pmwiki-HTTP-pattern ".+?\\.php\\)\\(/\\|$\\)")
   "This pattern gets WikiEngine address and where pagename starts.")
 
@@ -305,7 +301,9 @@ multibyte characters."
   "Pattern that is used to extract the name of the site")
 
 (defvar pmwiki-link-pattern
-  "\\[\\[\\([^]|>]*?\\)\\(?:\\]\\]\\||.+?\\]\\]\\)\\|\\[\\[.+?->\\([^]|>]*?\\)\\]\\]"
+  (concat "\\[\\[\\([^]|>]*?\\)"
+	  "\\(?:\\]\\]\\||.+?\\]\\]\\)\\|" ; [[ <link> ]] or [[ <link> | ... ]]
+	  "\\[\\[.+?->\\([^]|>]*?\\)\\]\\]") ; [[ ... -> <link> ]]
   "The pattern used for `pmwiki-next', `pmwiki-prev', `pmwiki-follow' etc.")
 
 ;;
@@ -389,6 +387,8 @@ See `pmwiki-slash-format'.")
 (defcustom pmwiki-fill-column 76 "Fill column width for `pmwiki-mode'.")
 (defcustom pmwiki-mode-hooks nil "")
 (defcustom pmwiki-save-before-hooks nil "")
+(defcustom pmwiki-menu-entry-max-length 50
+  "Maximal number of menu entry characters.")
 
 (defcustom pmwiki-decode nil
   "Function called after loading wiki source. No arguments are passed.
@@ -403,12 +403,21 @@ It is supposed to be the inverse of `pmwiki-decode'.")
 (defcustom pmwiki-author "" "\"Name\" that shows up as author of the
 changes when a page is saved from `pmwiki-mode'.")
 
+(defcustom pmwiki-default-page-name "\\0"
+  "Default page name when page is not given, like in [[Group.]] links.
+\\0 is substituted by group name.")
+
+(defvar pmwiki-mode-line-string nil
+  "A buffer-local string with site address, to place in the mode line.")
+
+;; XEmacs compatibility issues resolved here
 (defvar pmwiki-mode-line-buffer-identification
-  '(#("%09b" 0 4
-      (face
-       (:weight bold)
-       help-echo "mouse-1: previous buffer, mouse-3: next buffer" local-map
-       (keymap
+  `(,(propertize
+     "%09b"
+     'help-echo "mouse-1: previous buffer, mouse-3: next buffer"
+     'face 'bold
+     'local-map
+       '(keymap
 	(header-line keymap
 		     (mouse-3 . mode-line-bury-buffer)
 		     (down-mouse-3 . ignore)
@@ -417,16 +426,12 @@ changes when a page is saved from `pmwiki-mode'.")
 	(mode-line keymap
 		   (mouse-3 . mode-line-bury-buffer)
 		   (mouse-1 . mode-line-unbury-buffer)
-		   (down-mouse-1 . ignore)))))
+		   (down-mouse-1 . ignore))))
     " "
-    (:eval (propertize (pmwiki-create-mode-line-string)
-		       'face 'italic 'mouse-face 'bold-italic
-		       'help-echo pmwiki-page-uri
-		       ))
+    pmwiki-mode-line-string
     )
   "The mode line control used in pmwiki-mode for buffer identification, i.e.
 it adds the name of the site after the name of the buffer (wiki page).")
-
 
 
 ;; ----------------------------------------------------------------------
@@ -485,7 +490,7 @@ otherwise an error is thrown."
 
 
 (define-derived-mode pmwiki-mode text-mode "PmWiki"
-  "`pmwiki-mode` v0.2 is a Mode to edit PmWiki pages (http://www.pmwiki.org).
+  "`pmwiki-mode` v0.4 is a Mode to edit PmWiki pages (http://www.pmwiki.org).
 
 Typically you start by using the function `pmwiki-open' to open a URI, e.g.
 	http://www.pmwiki.org/wiki/Main/WikiSandbox
@@ -575,22 +580,10 @@ Interactive functions:
   (setq indent-tabs-mode t)
   (set (make-local-variable 'mode-line-buffer-identification)
        pmwiki-mode-line-buffer-identification)
+  (pmwiki-build-menu)
   (run-hooks 'pmwiki-mode-hooks))
 
-  
 
-(define-key pmwiki-mode-map (kbd "C-c C-p") 'pmwiki-prev)
-(define-key pmwiki-mode-map (kbd "C-c C-n") 'pmwiki-next)
-(define-key pmwiki-mode-map (kbd "C-c C-f") 'pmwiki-follow)
-(define-key pmwiki-mode-map (kbd "C-c C-g") 'pmwiki-follow)
-(define-key pmwiki-mode-map (kbd "C-c C-o") 'pmwiki-open)
-(define-key pmwiki-mode-map (kbd "C-c C-c") 'pmwiki-save)
-(define-key pmwiki-mode-map (kbd "C-c C-w") 'pmwiki-save-as)
-(define-key pmwiki-mode-map (kbd "C-c C-b") 'pmwiki-browse)
-(define-key pmwiki-mode-map (kbd "C-c C-m") 'pmwiki-map-site)
-;(define-key pmwiki-mode-map (kbd "C-c C-s") 'pmwiki-search) ; FIXME
-(define-key pmwiki-mode-map (kbd "C-c C-r") 'pmwiki-reload)
-(define-key pmwiki-mode-map (kbd "C-c m")   'pmwiki-minor-mode)
 
 (defvar pmwiki-uri-transforms nil 
 "Specifies transformations that will be applied to a URI pattern,
@@ -655,47 +648,60 @@ If GOTO-END is nil, wait until the process is done, process contents with
 		   (pmwiki-loc 'name loc) ; output buffer
 		   content-type)	) ; typically nil
     (pmwiki-mode)
-    (set-fill-column pmwiki-fill-column)
     (set (make-local-variable 'pmwiki-location-list) loc)
+    (set (make-local-variable 'pmwiki-mode-line-string)
+	 (pmwiki-create-mode-line-string))
+    (set-fill-column pmwiki-fill-column)
     (set (make-local-variable 'pmwiki-encoded-password) user-and-password)
+    ;;(set (make-local-variable 'speedbar-initial-expansion-list-name)
+    ;(setq speedbar-initial-expansion-list-name "PmWiki")
     (set 'TeX-header-end "^[^%\n]*\\\\begin *{document}") ;FIXME
     (set 'TeX-trailer-start "^[^%\n]*\\\\end *{document}")
     (set 'TeX-master pmwiki-TeX-master-file)
     (unless goto-end
       (while (string-equal (process-status proc) "open") (sleep-for 0.050))
       (goto-char 1)
-      (funcall pmwiki-decode)
+      (if pmwiki-decode
+	  (funcall pmwiki-decode))
       (goto-char 1)
       (if (cdddr loc)
 	  (progn
 	    (sleep-for 1) ; FIXME
-	    (search-forward (concat "[[#" (pmwiki-loc 'anchor loc) "]]"))))
+	    (re-search-forward
+	     ;; FIXME: escape anchor regexp
+	     (concat "\\[\\[##?" (pmwiki-loc 'anchor loc) "\\]\\]"))))
     (not-modified))
     proc))
 
 
-;; Link matching algorithm (v0.2):
+;; Link matching algorithm (v0.4):
 ;;
 ;; 1: extract link from "[[" to "|" orelse from "->" to "]]"
 ;;    orelse from "[[" to "]]"
 ;;
-;; 2: remove all round brackets "(", ")"
+;; 2: remove non-word-separationg punctuation: ()'
 ;;
 ;; 3: extract the WikiEngine address part if there is one
 ;;
-;; 4: capitalize all words before "#", not directly preceded by "-"
+;; 4: extract anchor if there is one
 ;;
-;; 5: remove all spaces
+;; 5: capitalize all words not directly preceded by "-"
 ;;
-;; 6: extract parts [<Group>{.|/}]<Page>[#<anchor>], if Page is preceded
-;;    by "!", set group to Category, if by "~", to Profiles
+;; 6: remove all word-separating punctuation: SPACE!@$=_+\{}`~\
+;;
+;; 7: extract parts [<Group>{.|/}]<Page>[#<anchor>], if Page is preceded
+;;    by "!", set group to Category, if by "~", to Profiles,
+;;    if Page is not given, set according to `pmwiki-default-page-name'
 
 
 (defun pmwiki-capitalize (str)
   "Capitalize words in STR without changing the case of inner letters."
   (replace-regexp-in-string "[^-]\\<[a-z]\\|^[a-z]" 'capitalize str))
 
-;; Implenents the matching algorithm, without the first point
+(pmwiki-capitalize "located_kindly")
+
+;; Implenents the matching algorithm, without the first point,
+;; used for `pmwiki-follow' and for `pmwiki-open'
 (defun pmwiki-link-to-loc (maybe-link)
   "Convert a string with a page, e.g. \"Group.Page\" to a location list, i.e.
 	(\"baseURI\" \"Group\"  \"Page\" . \"anchor\")
@@ -704,47 +710,58 @@ All parts (base, group, page, anchor) are optional. If base and only one of
 group and page is given, then both group and page are set the same.
 If only site is given, group and page are set to Main.HomePage."
   (let (baseURI anchor-beg anchor group page aux)
-    (setq maybe-link (replace-regexp-in-string "[()]" "" maybe-link))
-    (if (string-match pmwiki-base-pattern maybe-link)
+    (if (or (not maybe-link) (string= maybe-link "")) nil
+      (setq maybe-link (replace-regexp-in-string "[()]" "" maybe-link))
+      (if  (string= maybe-link "") nil
+	(if (string-match pmwiki-base-pattern maybe-link)
 	(progn
 	  (setq baseURI
 		(or (match-string 1 maybe-link)
 		    (match-string 3 maybe-link)
 		    (match-string 5 maybe-link)
 		    (match-string 8 maybe-link)))
-	  (setq aux (substring maybe-link
-				      (or (match-end 2) (match-end 4)
-					  (match-end 6) (match-end 9))))
+	  (setq aux (substring
+		     maybe-link
+		     ;; `and's: strange workaround for XEmacs
+		     (or (and (match-end 1) (match-end 2))
+			 (and (match-end 3) (match-end 4))
+			 (and (match-end 5) (match-end 6))
+			 (and (match-end 8) (match-end 9)))))
 	  (unless pmwiki-freeze-slash-format
-	    (let ((slashmark (or (match-string 2 maybe-link)
-				 (match-string 4 maybe-link)
-				 (match-string 6 maybe-link)
-				 (match-string 9 maybe-link))))
+	    (let ((slashmark
+		   (or (and (match-end 1) (match-string 2 maybe-link))
+		       (and (match-end 3) (match-string 4 maybe-link))
+		       (and (match-end 5) (match-string 6 maybe-link))
+		       (and (match-end 8) (match-string 9 maybe-link)))))
 	      (if (string-match "/" slashmark)
 		  (setq pmwiki-slash-format t)
 		(if (string-match "?" slashmark)
 		    (setq pmwiki-slash-format nil)))))
 	  (setq maybe-link aux)))
-    (setq anchor-beg (string-match "#\\(.+?\\)$" maybe-link))
+    (setq anchor-beg (string-match "##?\\(\\S-+\\)\\s-*$" maybe-link))
     (if anchor-beg
 	(progn
 	  (setq anchor (match-string 1 maybe-link))
-	  (setq anchor (replace-regexp-in-string " /" "" anchor))
 	  (if (string= anchor "")
 	      (setq anchor nil))
 	  (setq maybe-link (substring maybe-link 0 anchor-beg))))
     (setq maybe-link (pmwiki-capitalize maybe-link))
-    (setq maybe-link (replace-regexp-in-string " " "" maybe-link))
-    (if (string-match "^\\(.+?\\)[./]\\(.*\\)$" maybe-link)
+    (setq maybe-link (replace-regexp-in-string
+		      "[!@$=_+{}`~\\]\\|\\s-" "" maybe-link))
+    ;; take the last bit as page name (compatible with Hg)
+    (if (string-match "^\\(.+\\)[./]\\(.*?\\)$" maybe-link)
 	(progn
 	  (setq group (match-string 1 maybe-link))
 	  (setq page (match-string 2 maybe-link))
 	  (if (string= page "")
-	      (setq page group)))
+	      (setq page
+		    (replace-regexp-in-string
+		     "\\\\0"
+		     group pmwiki-default-page-name))))
       (setq page maybe-link)
       (if baseURI
 	  (setq group page)))
-    `(,baseURI ,group ,page . ,anchor)))
+    `(,baseURI ,group ,page . ,anchor)))))
 
 (defun pmwiki-loc (P &optional loc-list)
   "Compute relevant information from location list.
@@ -781,12 +798,22 @@ If `pmwiki-slash-format' is t, replace dots and \"?n=\" with slashes above."
 	      (if pmwiki-slash-format "/" ".") (caddr loc-list)))
      ((string-equal s "URI")
       (concat (car loc-list)
-	      (if pmwiki-slash-format "/" "?n=") (cadr loc-list)
+	      (cond
+	       ((string-match "^https?://[^/]+$" (car loc-list))
+		(setq pmwiki-slash-format nil)
+		"/?n=")
+	       (pmwiki-slash-format "/")
+	       (t "?n=")) (cadr loc-list)
 	      (if pmwiki-slash-format "/" ".") (caddr loc-list)
 	      (if (cdddr loc-list) (concat "#" (cdddr loc-list)) "")))
      ((string-equal s "URINA")
       (concat (car loc-list)
-	      (if pmwiki-slash-format "/" "?n=") (cadr loc-list)
+	      (cond
+	       ((string-match "^https?://[^/]+$" (car loc-list))
+		(setq pmwiki-slash-format nil)
+		"/?n=")
+	       (pmwiki-slash-format "/")
+	       (t "?n=")) (cadr loc-list)
 	      (if pmwiki-slash-format "/" ".") (caddr loc-list)))
      ((string-equal s "site")
       (string-match pmwiki-site-pattern (car loc-list))
@@ -798,19 +825,21 @@ If `pmwiki-slash-format' is t, replace dots and \"?n=\" with slashes above."
 When LOC2 is not given, use `pmwiki-location-list'."
   (unless loc2 (setq loc2 pmwiki-location-list))
   (if loc2
-      `(,(or (car loc1) (car loc2))
-	,(or (cadr loc1) (cadr loc2))
-	,(or (caddr loc1) (caddr loc2)) .
-	,(or (cdddr loc1) (cdddr loc2)))
+      `(,(or (and (not (string= "" (car loc1))) (car loc1)) (car loc2))
+	,(or (and (not (string= "" (cadr loc1))) (cadr loc1)) (cadr loc2))
+	,(or (and (not (string= "" (caddr loc1))) (caddr loc1)) (caddr loc2)) .
+	,(or (and (not (string= "" (cdddr loc1))) (cdddr loc1)) (cdddr loc2)))
     loc1))
  
 
 (defun pmwiki-create-mode-line-string ()
   "Used to create the text that goes into the mode line."
-  (if pmwiki-location-list
-      (format "[%s]" (pmwiki-loc 'site))
-    "[?]"))
-
+  (propertize
+   (if pmwiki-location-list
+       (format "[%s]" (pmwiki-loc 'site))
+     "[?]")
+   'face 'italic 'mouse-face 'bold-italic
+   'help-echo pmwiki-page-uri))
 
 (defun pmwiki-show-uri ()
   "Show the URI for the wiki page being edited in the current buffer."
@@ -886,12 +915,14 @@ the current buffer is used."
 open page specified by a URI."
   (interactive "sName or URI (ex: Main.WikiSandbox): ")
   (let ((loc (pmwiki-merge-loc (pmwiki-link-to-loc name))))
-    (if (car loc) (pmwiki-edit loc)
+    (if (car loc)
+	;; additional merge to allow default wikipage on site
+	(pmwiki-edit (pmwiki-merge-loc loc '(nil "Main" "HomePage")))
       (message
        (concat "No page URI given, assuming site is " pmwiki-default-site))
       (sleep-for 1) 			; Pause 1 second to show message
       (pmwiki-edit (pmwiki-merge-loc loc (pmwiki-link-to-loc
-					  pmwiki-default-site))))))
+					  pmwiki-default-uri))))))
 
 
 (defun pmwiki-reload ()
@@ -1059,7 +1090,8 @@ and in addition runs it `longlines-show-hard-newlines'."
 				 (funcall pmwiki-encode (buffer-string))
 			       (buffer-string))))
 		      'iso-8859-1
-		      headers)))))
+		      headers nil nil t)
+		     ))))
     (switch-to-buffer cur-buffer)
     (pmwiki-mode)
     (set (make-local-variable 'pmwiki-location-list) loc)
@@ -1158,6 +1190,176 @@ INSERTCHAR is the character to insert the source markup with
      ;;(mmm-update-submode-region)
      (when loudly (message nil)))
 )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;                            Menu support
+  
+(defvar pmwiki-mode-map (make-sparse-keymap)
+  "Keymap for Pmwiki Mode.")
+(defvar pmwiki-mode-menu-map (make-sparse-keymap "PmWiki")
+  "Keymap for Pmwiki Mode menu.")
+(defvar pmwiki-toc-menu-last-buffer nil)
+(defvar pmwiki-toc-keymaps nil)
+
+(define-key pmwiki-mode-map (kbd "C-c C-p") 'pmwiki-prev)
+(define-key pmwiki-mode-map (kbd "C-c C-n") 'pmwiki-next)
+(define-key pmwiki-mode-map (kbd "C-c C-f") 'pmwiki-follow)
+(define-key pmwiki-mode-map (kbd "C-c C-g") 'pmwiki-follow)
+(define-key pmwiki-mode-map (kbd "C-c C-o") 'pmwiki-open)
+(define-key pmwiki-mode-map (kbd "C-c C-c") 'pmwiki-save)
+(define-key pmwiki-mode-map (kbd "C-c C-w") 'pmwiki-save-as)
+(define-key pmwiki-mode-map (kbd "C-c C-b") 'pmwiki-browse)
+(define-key pmwiki-mode-map (kbd "C-c C-m") 'pmwiki-map-site)
+;(define-key pmwiki-mode-map (kbd "C-c C-s") 'pmwiki-search) ; FIXME
+(define-key pmwiki-mode-map (kbd "C-c C-r") 'pmwiki-reload)
+(define-key pmwiki-mode-map (kbd "C-c m")   'pmwiki-minor-mode)
+
+(defun pmwiki-build-menu ()
+  (easy-menu-define pmwiki-mode-menu-map (list pmwiki-mode-map)
+    "PmWiki Mode Menu."
+    '("PmWiki"
+      ["Open" pmwiki-open t]
+      ["Save" pmwiki-save t]
+      ["Save As" pmwiki-save-as t]
+      ["My Wiki" mywiki-open t]
+      "---"
+      ["Reload" pmwiki-reload t]
+      ["Browse" pmwiki-browse t]
+      ["Changes Mode" pmwiki-minor-mode t]
+      "---"
+      ["Previous Link" pmwiki-prev t]
+      ["Next Link" pmwiki-next t]
+      ["Follow Link" pmwiki-follow t]
+      "---"
+      ["Search" nil nil]
+      ("Table of Contents"
+       ["Scan" pmwiki-rescan-toc t]
+       )
+      ))
+  (easy-menu-add pmwiki-mode-menu-map)
+  (if pmwiki-running-xemacs
+      (add-hook 'activate-menubar-hook 'pmwiki-update-toc-menu)
+    (if (not (functionp 'easy-menu-create-keymaps)) ()
+      ;; Patch for Emacs
+      (add-hook 'menu-bar-update-hook
+		'pmwiki-with-emacs-update-toc-menu)
+      (make-local-variable 'pmwiki-toc-keymaps)
+      (setq pmwiki-toc-keymaps
+	    (cdr (easy-menu-create-keymaps
+		  "Table of Contents" pmwiki-toc-menu-map)))
+      (setq pmwiki-toc-menu-last-buffer nil))))
+
+(defun pmwiki-update-toc-menu ()
+  (if (eq major-mode 'pmwiki-mode)
+      (easy-menu-change
+       '("PmWiki") "Table of Contents"
+       pmwiki-toc-menu)))
+
+
+(defun pmwiki-with-emacs-update-toc-menu ()
+  (if (current-local-map)
+      (let ((keymap
+	     (lookup-key (current-local-map)
+			 [menu-bar "PmWiki" "Table of Contents"])))
+	(if (and
+	     (keymapp keymap)
+	     (not (eq pmwiki-toc-menu-last-buffer (current-buffer))))
+	    (setcdr keymap pmwiki-toc-keymaps)
+	  (setq pmwiki-toc-menu-last-buffer (current-buffer))))))
+
+(defvar pmwiki-toc-entry-regexp
+  "^\\(!+\\)\\s-*\\([^!].*\\)$"
+  "Regexp matching table of contents entry (e.g. (sub)chapter title).")
+
+(defvar pmwiki-toc-menu (list ["Scan..." pmwiki-rescan-toc t])
+  "Initial content of the table of contents menu.")
+(make-variable-buffer-local 'pmwiki-toc-menu)
+
+
+(defun pmwiki-cut-menu-entry (str)
+  "Formats the menu entry string."
+  (if (< (length str) pmwiki-menu-entry-max-length) str
+    (concat (substring str 0 (- pmwiki-menu-entry-max-length 2)) "...")))
+
+(defun pmwiki-rescan-toc ()
+  "Parse the buffer and gather (sub)chapter info for table of contents menu."
+  (interactive)
+  (message "Creating table of contents...")
+  (save-excursion
+    (let ((last-depth 1) (depth) (diff)
+	  (menu-stack (list (list ["Rescan..." pmwiki-rescan-toc t]
+				  "Table of Contents")
+			    )))
+      (goto-char (point-min))
+      (setq debtrace "")
+      (while (re-search-forward pmwiki-toc-entry-regexp (point-max) t)
+	(let* ((p (make-marker))
+	       (refname
+		(pmwiki-cut-menu-entry
+		 (pmwiki-render-string-no-properties
+		  (match-string-no-properties 2))))
+	       (ref (list (vector "-->" (list 'pmwiki-goto p) t)
+			  refname))
+	       (leafref (vector refname (list 'pmwiki-goto p) t)))
+					; heading goes last
+	  (set-marker p (point))
+	  (setq depth (length (match-string 1)))
+	  (setq diff (- last-depth depth))
+	  (while (> -1 diff)
+	    (setq diff (1+ diff))
+	    (setcar menu-stack (cons (list "...") (car menu-stack)))
+	    (setq menu-stack (cons (list "...") menu-stack)))
+	  (while (<= 0 diff)
+	    (setq diff (1- diff))
+	    (if (< 2 (length (car menu-stack)))
+		(setcar (cadr menu-stack) (nreverse (car menu-stack))))
+	    (pop menu-stack))
+	  (setcar menu-stack (cons leafref (car menu-stack)))
+	  (setq menu-stack (cons ref menu-stack))
+	  (setq last-depth depth)))
+      (while (cdr menu-stack)
+	(if (< 2 (length (car menu-stack)))
+	    (setcar (cadr menu-stack) (nreverse (car menu-stack))))
+	(pop menu-stack))
+      (setq pmwiki-toc-menu (nreverse (car menu-stack)))
+	(if (or pmwiki-running-xemacs
+		(not (functionp 'easy-menu-create-keymaps))) ()
+	  ;; Patch for Emacs
+	  (setq pmwiki-toc-keymaps
+		(cdr (easy-menu-create-keymaps 
+		      "Definitions" pmwiki-toc-menu)))
+	  (setq pmwiki-toc-menu-last-buffer nil))
+	(pmwiki-update-toc-menu)
+      (message "Creating table of contents...done"))))
+
+(defun pmwiki-goto (pos)
+  (goto-char pos)
+  (recenter))
+
+(defvar pmwiki-render-string-no-properties-transforms
+  '(
+    ("\\(?:\\[\\[##?[A-Za-z0-9_---]*\\]\\]\\)" . "")
+    ("\\(?:\\[\\[[^|]*| *\\(.+?\\)\\]\\]\\)" . "\\1")
+    ("\\(?:\\[\\[\\(.+?\\) *->[^]]*\\]\\]\\)" . "\\1")
+    ("\\(?:\\[\\[ *\\([^]|>]+?\\) *\\]\\]\\)" . "\\1")
+    ("@@\\(.+?\\)@@" . "\\1")
+    ("''\\(.+?\\)''" . "\\1")
+    ("'''\\(.+?\\)'''" . "\\1")
+    ("''''\\(.+?\\)''''" . "\\1")
+    ("'^\\(.+?\\)^'" . "^\\1")
+    ("'_\\(.+?\\)_'" . "_\\1")
+    )
+  "Regexps to remove markup from text.
+See `pmwiki-render-string-no-properties'.")
+
+(defun pmwiki-render-string-no-properties (str)
+  "Remove markup from text so that it looks more like when browsing.
+Currently only processes bracketed links."
+  (interactive)
+  (reduce (lambda (accum transf) 
+	    (replace-regexp-in-string (car transf) (cdr transf) accum))
+	  pmwiki-render-string-no-properties-transforms
+	  :initial-value str))
 
 (provide 'pmwiki-mode)
 ;;; pmwiki-mode.el ends here
