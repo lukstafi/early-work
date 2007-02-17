@@ -1,0 +1,2 @@
+* Anchor is a marker when it should be nil (from pmwiki-open)
+* When loading short page, the point is not moved to the beginning

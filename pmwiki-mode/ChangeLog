@@ -1,0 +1,20 @@
+Version 0.4
+	* buffer-local table of contents, site-local site map, and global search menu
+	* in-buffer textual menus based on ee information categorizer
+	* go to searched term in search reference
+	* automatic user and password per site / group / page rules
+	* online password query when necessary
+	* redirection-based save verification (as an option, turned on by default)
+	* 3-level debugging (store real server answer in a buffer)
+	* supports Emacs 21 and 22, but not XEmacs
+	
+Version 0.3.5
+	* added menu with table of contents
+	* XEmacs compatible now
+	* several bug fixes
+	
+Version 0.3:
+	* removed CamelCase highlighting
+	* added [[ ... ]] links following with PmWiki conventions
+	* `mmm-mode': jsMath (`preview-latex' tested) and Code Block (language modes) submodes,
+	* removed search mode (awaits rewrite)
