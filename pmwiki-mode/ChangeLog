@@ -1,3 +1,15 @@
+Version 0.5
+	* tool-bar with all relevant actions (file upload not implemented yet)
+	* don't reopen pages already in a buffer
+	* go to previous / next page in parent ee menu
+	* "Opened Pages" menu
+	* automatic adjustable "minor edit" diffclass setting
+	* customization menu and buffer
+	* resolving update clashes by "merge buffers with ancestor"
+	* browsing history with `forward' and `backward' commands
+	* dataloss security (ask when killing buffers)
+	* "Summary:" field: prompt for when saving or set for buffer
+	
 Version 0.4
 	* buffer-local table of contents, site-local site map, and global search menu
 	* in-buffer textual menus based on ee information categorizer
