@@ -5,7 +5,7 @@
 ;; Authors:  Christian Ridderström <christian.ridderstrom@home.se>, Lukasz Stafiniak <lukstafi@gmail.com>
 ;; Maintainer: Lukasz Stafiniak <lukstafi@gmail.com>
 ;; Release: $Name:  $
-;; Revision: $Revision: 1.78 $
+;; Revision: $Revision: 1.88 $
 ;; Keywords: hypermedia
 ;; URI: http://www.pmwiki.org/wiki/EmacsModes/Pmwiki-mode
 ;; 
@@ -474,7 +474,7 @@ e.g. Mammal-canine."
     ?- ?_ ?. ?! ?~ ?* ?' ?\( ?\))
   "A list of characters that are _NOT_ reserved in the URL spec.
 This is taken from RFC 2396.")
-;;;stolen from `emacs/url-util.el' [lukstafi]
+;;;code from `emacs/url-util.el' [lukstafi]
 (defun pmwiki-http-url-encode (string encoding)
   "Return a new string that is STRING URI-encoded.
 First, STRING is converted to ENCODING, if necessary.  Then, for each
@@ -975,7 +975,7 @@ If `pmwiki-slash-format' is t, replace dots and \"?n=\" with slashes above."
 		    (setq pmwiki-slash-format nil))
 		  "/?n="))
 	       ((string-match "/$" (car loc-list))
-		(if (not (pmwiki-slash-format or pmwiki-prefer-slashed))
+		(if (not (or pmwiki-slash-format pmwiki-prefer-slashed))
 		    "?n="
 		  (unless pmwiki-freeze-slash-format
 		    (setq pmwiki-slash-format t))
@@ -1005,42 +1005,16 @@ add site from OLD-BASE."
 	(concat (match-string 0 old-base) base)
       base)))
 
-(defun pmwiki-merge-loc (loc1 &optional loc2 transparent)
+(defun pmwiki-merge-loc (loc1 &optional loc2)
   "Merge two location lists: if LOC1 doesn't specify something, use LOC2.
 When LOC2 is not given, use `pmwiki-location-list'."
   (unless loc2 (setq loc2 pmwiki-location-list))
   (if (not loc2) loc1
-    (let (site group page anchor)
-      (when (and (car loc1) (not (string= "" (car loc1))))
-	(if (car loc2)
-	    (setq site (pmwiki-merge-uri-base (car loc1) (car loc2)))
-	  (setq site (car loc1))))
-      (when (and (cdr loc1) (cadr loc1) (not (string= "" (cadr loc1))))
-	    (setq group (cadr loc1)))
-      (when (and (cdr loc1) (cddr loc1) (caddr loc1)
-		     (not (string= "" (caddr loc1))))
-	(setq page (caddr loc1)))
-      (when (and (cdr loc1) (cddr loc1)
-		 (cdddr loc1) (not (and (stringp (cdddr loc1))
-					 (string= "" (cdddr loc1)))))
-	    (setq anchor (cdddr loc1)))
+    `( ,(or (car loc1) (car loc2))
+       ,(or (cadr loc1) (cadr loc2))
+       ,(or (caddr loc1) (caddr loc2))
+       . ,(or (cdddr loc1) (cdddr loc2)))))
 
-      (when (and (not site) (car loc2) (not (string= "" (car loc2))))
-	(setq site (car loc2)))
-      (when (and (or transparent (not site))
-		 (cdr loc2) (cadr loc2) (not (string= "" (cadr loc2))))
-	(setq group (cadr loc2)))
-      (when (and (or transparent (not (or site group)))
-		 (cdr loc2) (cddr loc2) (caddr loc2)
-		 (not (string= "" (caddr loc2))))
-	(setq page (caddr loc2)))
-      (when (and (or transparent (not (or site group page)))
-		 (cdr loc2) (cddr loc2)
-		 (cdddr loc2) (not (and (stringp (cdddr loc2))
-					(string= "" (cdddr loc2)))))
-	(setq anchor (cdddr loc2)))
-
-	`(,site ,group ,page . ,anchor))))
  
 (defun pmwiki-toggle-minor-edit ()
   "Toggle minor edit."
@@ -1264,7 +1238,10 @@ buffer into which page is loaded."
   "If non-nil, assume edit on edit vs browse."
   :group 'pmwiki-group :type 'boolean)
 
-(defun pmwiki-edit-passwd-fallback (loc buf still-running passwd-kind)
+(defun pmwiki-edit-passwd-fallback (loc buf still-running passwd-kind
+					&optional action-args)
+  "Fallback to fill in password from `pmwiki-edit-start'.
+ACTION-ARGS are ignored!"
   (if (or
        pmwiki-always-edit (equal passwd-kind 'passwd-guessed)
        (y-or-n-p
@@ -1291,13 +1268,24 @@ Call CONT with current buffer and that buffer as args."
   (let ((still-running (make-symbol "still-running"))
 	(who (if with-timestamp 'get-edit-source 'get-source)))
     (set still-running t)
-    (funcall pmwiki-http-action-function 'GET loc buf 'get-source
+    (funcall pmwiki-http-action-function 'GET loc buf who
 	   `(
 	     ("author" . ,pmwiki-author)
 	     ("action" . ,(pmwiki-source-action who))) still-running
 	     nil nil nil
-	   (list cont (current-buffer)))
+	   (list cont (current-buffer))
+	   (when with-timestamp 'pmwiki-get-source-passwd-fallback))
     still-running))
+
+(defun pmwiki-get-source-passwd-fallback (loc buf still-running passwd-kind
+					      action-args)
+  (funcall pmwiki-http-action-function 'POST loc buf 'get-edit-source
+	   `(("author" . ,pmwiki-author)
+	     ("action". "edit")
+	     ("authform" . "1"))
+	   still-running
+	   nil nil nil
+	   action-args))
 
 
 (defun pmwiki-map-site (&optional arg)
@@ -1464,7 +1452,7 @@ Use additional HEADERS. Works together with `pmwiki-http-loop-default'."
   (when (and passwd-auth (not (car passwd-auth)))
     (setq passwd-auth nil))
   (if (and passwd-fallback passwd-auth)
-      (funcall passwd-fallback loc buf still-running passwd-kind)
+      (funcall passwd-fallback loc buf still-running passwd-kind action-args)
   (let* ((request-data
 	  (mapcar
 	   (lambda (arg)
@@ -1489,12 +1477,20 @@ Use additional HEADERS. Works together with `pmwiki-http-loop-default'."
 			   passwd-prefix
 			   request-data))
 	       (url-request-method "GET")
+;; 	       (url-http-response-version
+;; 		(if (boundp 'url-http-response-version)
+;; 		    url-http-response-version
+;; 		  "1.0"))
 	       ;;FIXME: make `url-http-parse-headers' accept this dynvar
 	       ;;(url-http-no-redirect t)
 	       )
 	  (url-retrieve url 'pmwiki-http-loop-default (cons url args)))
       (let* ((url (pmwiki-loc 'base loc))
 	     (url-request-method "POST")
+;; 	     (url-http-response-version
+;; 	      (if (boundp 'url-http-response-version)
+;; 		  url-http-response-version
+;; 		"1.0"))
 	     (url-request-data
 	      (concat
 	       "n=" (pmwiki-loc 'nameENCNA loc) "&"
@@ -1510,12 +1506,13 @@ Use additional HEADERS. Works together with `pmwiki-http-loop-default'."
 
 ;; This updates `pmwiki-original' a little bit late, but better than
 ;; letting updated version through in case of error during saving.
-(defun pmwiki-update-timestamp (timestamp)
+(defun pmwiki-update-timestamp (timestamp &optional raw-text)
   "Update `pmwiki-timestamp' and dump buffer contents to `pmwiki-original'."
   (setq pmwiki-timestamp timestamp)
   (when pmwiki-original			; checks edit vs get-source
     (let ((buf-text
-	   (buffer-substring-no-properties (point-min) (point-max))))
+	   (or raw-text
+	       (buffer-substring-no-properties (point-min) (point-max)))))
     (with-current-buffer pmwiki-original
       (delete-region (point-min) (point-max))
       (insert buf-text)))))
@@ -1531,7 +1528,8 @@ Use additional HEADERS. Works together with `pmwiki-http-loop-default'."
       (pmwiki-update-timestamp timestamp)))
   (when (and timestamp (and (consp buf) (equal (car buf) 'timestamp)))
     (with-current-buffer (cdr buf)
-      (pmwiki-update-timestamp timestamp))))
+      (pmwiki-update-timestamp timestamp raw-text))))
+
 
 (defun pmwiki-http-loop (http-error redirected raw-text timestamp url
 				    request loc
@@ -1572,7 +1570,7 @@ HEADERS do not contain authentication nor page name."
 		  (error "Wrong password (or user id)"))
 	      (if passwd-fallback
 		  (funcall passwd-fallback loc buf still-running
-			   'passwd-asked)
+			   'passwd-asked action-args)
 		(when authid
 		  (setq authid
 			(read-string "User Authentication. Name: ")))
@@ -1592,14 +1590,20 @@ HEADERS do not contain authentication nor page name."
 		   still-running who nil
 		   (and (or http-error failed)
 			(concat
-			 (if (stringp http-error) http-error
-			   (caddr http-error))
+			 (cond
+			  ((stringp http-error) http-error)
+			  ((stringp (caddr http-error)) (caddr http-error))
+			  ((numberp (caddr http-error))
+			   (number-to-string (caddr http-error)))
+			  ((symbolp (caddr http-error))
+			   (symbol-name (caddr http-error)))
+			  (t "UNKNOWN ERROR"))
 			 (and http-error failed ", ")
 				failed))
 		   action-args)))
       (let* ((new-loc
 	      (pmwiki-merge-loc (pmwiki-link-to-loc redirected t)
-				loc t))
+				loc))
 	     (new-visited-locs (cons loc visited-locs))
 	     (failed (pmwiki-parse-failure who))
 	     (cur-buf (current-buffer)))
@@ -1610,20 +1614,26 @@ HEADERS do not contain authentication nor page name."
 		pmwiki-debug-redirection-stack))
 	(kill-buffer cur-buf)
 	(if (find-if
-	     (lambda (arg) (pmwiki-equal-loc arg new-loc))
+	     (lambda (arg) (pmwiki-strict-equal-url arg new-loc))
 	     new-visited-locs)
-	    (progn
-	      (setq pmwiki-redirect-count pmwiki-max-redirections)
-	      (unless (or http-error failed)
-		(pmwiki-http-loop-fulfill-load))
-	      (funcall (pmwiki-action-cont who) loc buf
-		       still-running who t
-		   (and (or http-error failed)
-			(concat http-error (and http-error failed ", ")
-				failed))
-		       action-args))
+	    (error (concat "Probably looping redirection while reading "
+			   redirected))
+	  ;;FIXME: we no longer test action by expecting redirection
+;; 	(if (find-if
+;; 	     (lambda (arg) (pmwiki-equal-loc arg new-loc))
+;; 	     new-visited-locs)
+;; 	    (progn
+;; 	      (setq pmwiki-redirect-count pmwiki-max-redirections)
+;; 	      (unless (or http-error failed)
+;; 		(pmwiki-http-loop-fulfill-load))
+;; 	      (funcall (pmwiki-action-cont who) loc buf
+;; 		       still-running who t
+;; 		   (and (or http-error failed)
+;; 			(concat http-error (and http-error failed ", ")
+;; 				failed))
+;; 		       action-args))
 	  (if (not pmwiki-max-redirections)
-	      (error "Page redirected, set `pmwiki-max-redirections'.")
+	      (error "Page redirected, set `pmwiki-max-redirections'")
 	    (when (and pmwiki-redirect-count
 		       (>= 0 pmwiki-redirect-count))
 	      (error
@@ -1631,9 +1641,9 @@ HEADERS do not contain authentication nor page name."
 	    (when (not pmwiki-redirect-count)
 	      (setq pmwiki-redirect-count pmwiki-max-redirections))
 	    (setq pmwiki-redirect-count (1- pmwiki-redirect-count))
-	    (funcall pmwiki-http-action
+	    (funcall pmwiki-http-action-function
 		     request new-loc buf who headers still-running
-		     passwd-auth passwd-kind
+		     old-passwd-auth passwd-kind
 		     new-visited-locs action-args))))))
 
 (defvar pmwiki-html2text-replace-list
@@ -1690,12 +1700,21 @@ HEADERS do not contain authentication nor page name."
 (defun pmwiki-http-loop-parse-pagesource (who buf)
   "Variables TEXT and TIMESTAMP should be dynamically bound around the call."
   (when (and (not (equal buf 'discard))
-	     (equal (pmwiki-action-kind who) 'edit))
+	     ;;FIXME: should be smarter about when to parse-pagesource?
+	     (or (equal (pmwiki-action-kind who) 'edit)
+		 (equal (pmwiki-action-kind who) 'get-edit-source)))
     (let ((aux (pmwiki-parse-pagesource
 		(not (or (bufferp buf) (stringp buf))))))
       (when aux
 	(setq timestamp (car aux))
 	(setq text (cdr aux))))))
+
+(defun pmwiki-member (elt list)
+  "Like `member' but doesn't care about trailing nil."
+  (let ((pos list))
+    (while (and (consp list) (not (equal elt (car pos)))
+      (setq pos (cdr pos))))
+    (when (and (consp pos) (equal elt (car pos))) pos)))
 
 ;; FIXME: a workaround for older versions of url package
 (defun pmwiki-http-loop-default (&rest cbargs)
@@ -1717,7 +1736,9 @@ HEADERS does not contain authentication nor page name."
 	 (passwd-fallback (nth (- (length cbargs) 1) cbargs))
 	 start end text timestamp)
       (goto-char (point-min))
-      (if (equal (pmwiki-action-kind who) 'edit)
+      ;;FIXME: should be smarter about when to parse-pagesource?
+      (if (or (equal (pmwiki-action-kind who) 'edit)
+	      (equal (pmwiki-action-kind who) 'get-edit-source))
 	  (pmwiki-http-loop-parse-pagesource who buf)
 	(when (or (bufferp buf) (stringp buf))
 	  (if (re-search-forward "^$")
@@ -1728,10 +1749,10 @@ HEADERS does not contain authentication nor page name."
 	      (setq end (- (point-max) 2))
 	  (setq end (point-max)))
 	  (setq text (buffer-substring start end))))
-    (pmwiki-http-loop (and (member :error status)
-			   (print (cadr (member :error status))))
-		      (and (member :redirect status)
-			   (cadr (member :redirect status)))
+    (pmwiki-http-loop (and (pmwiki-member :error status)
+			   (print (cadr (pmwiki-member :error status))))
+		      (and (pmwiki-member :redirect status)
+			   (cadr (pmwiki-member :redirect status)))
 		      text timestamp url request loc buf still-running
 		      visited-locs who
 		      old-passwd-auth passwd-kind headers action-args
@@ -1763,7 +1784,7 @@ Use additional HEADERS. Works together with `pmwiki-http-loop-default'."
   (when (and passwd-auth (not (car passwd-auth)))
     (setq passwd-auth nil))
   (if (and passwd-fallback passwd-auth)
-      (funcall passwd-fallback loc buf still-running passwd-kind)
+      (funcall passwd-fallback loc buf still-running passwd-kind action-args)
   (let* ((request-data
 	   (if passwd-auth
 	       (cons (cons "authpw" (car passwd-auth))
@@ -2288,6 +2309,13 @@ To use it, should NOT have $EnableRedirect = 0 in your config.php."
   "If non-nil, assume that there is at most one wiki-engine on each site."
   :group 'pmwiki-group :type 'boolean)
 
+
+;;FIXME: should be clarified if this is enough
+(defun pmwiki-strict-equal-url (loc new-loc)
+  "Compare wikiengine addresses."
+  (and loc new-loc
+       (string= (car loc) (car new-loc))))
+
 (defun pmwiki-equal-loc (loc new-loc &optional no-page no-group)
   "Compare locations, when NEW-LOC can be url-encoded."
   (and loc new-loc
@@ -2394,7 +2422,7 @@ See `pmwiki-location-list'."
 	(found-full-link (thing-at-point-looking-at pmwiki-link-pattern)))
     (if found-full-link
 	(let ((maybe-link (match-string-no-properties 1)))
-	  (message (concat "maybe-link: " maybe-link))
+	  ;;(message (concat "maybe-link: " maybe-link))
 	  (pmwiki-link-to-loc maybe-link))
       nil))) ; not looking at [[ ... ]]
 
@@ -2528,7 +2556,23 @@ and in addition runs it `longlines-show-hard-newlines'."
    (current-buffer)))
 
 
-
+(defun pmwiki-open (name)
+  "Open a page specified by NAME from the current wiki engine, or
+open page specified by a URI."
+  (interactive "sName or URI (default: Main.HomePage): ")
+  (setq pmwiki-redirect-count pmwiki-max-redirections)
+  (let (running (loc (pmwiki-merge-loc (pmwiki-link-to-loc name))))
+    (if (car loc)
+	;; additional merge to allow default wikipage on site
+	(setq running
+	      (pmwiki-edit (pmwiki-merge-loc loc '(nil "Main" "HomePage"))
+			   'find))
+      (message
+       (concat "No page URI given, assuming site is " pmwiki-default-site))
+      (sleep-for 1) 			; Pause 1 second to show message
+      (setq running (pmwiki-edit (pmwiki-merge-loc loc (pmwiki-link-to-loc
+					  pmwiki-default-uri)) 'find)))
+    running))
 (defun mywiki-open (name)
   "Open page NAME from main wiki (or a page specified by an URI).
 Ex: 'Main.WikiSandbox' will open the page
@@ -2590,11 +2634,12 @@ INSERTCHAR is the character to insert the source markup with
       :insert ((?$ inline-math . (nil @ "{" @ "$" _ "$" @ "}" @ ))
 ;;"
 	       (?[ math . (nil @ "{" @ "$$" _ "$$" @ "}" @ ))))))
-
+?]
 
   (mmm-add-mode-ext-class 'pmwiki-mode nil 'pmwiki-jsmath-latex)
 
-   ;; for some reason, testing for `mmm-font-lock-mode' doesn't work for me
+;;FIXME: for some reason, testing for `mmm-font-lock-mode'
+;;        doesn't work for me
    (defun mmm-fontify-region (start stop &optional loudly)
      "Fontify from START to STOP keeping track of submodes correctly."
      (when loudly
@@ -2607,7 +2652,11 @@ INSERTCHAR is the character to insert the source markup with
      ;; I don't know why it does this, but let's undo it here.
      (let ((font-lock-beginning-of-syntax-function 'mmm-beginning-of-syntax))
        (mapc #'(lambda (elt)
-		 (mmm-fontify-region-list (car elt) (cdr elt)))
+		 (when (and (consp elt) (consp (cdr elt))
+			     (consp (cadr elt))
+			    (number-or-marker-p (caadr elt))
+			    (number-or-marker-p (cdadr elt)))
+		   (mmm-fontify-region-list (car elt) (cdr elt))))
 	     (mmm-regions-alist start stop)))
      ;; With jit-lock, this causes blips in the mode line and menus.
      ;; Shouldn't be necessary here, since it's in post-command-hook too.

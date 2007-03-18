@@ -1,3 +1,4 @@
+* On Emacs 22, `mmm-mode' does not work with fontification
 * On Emacs 21, `set-variable' on `pmwiki-no-summary' misbehaves on empty value
 * Anchor is a marker when it should be nil (from pmwiki-open) (FIXME: I forgot how to reproduce this)
 * When loading short page, the point is not moved to the beginning
