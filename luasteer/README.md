@@ -2,6 +2,12 @@
 
 Lua bindings for [OpenSteer](https://opensteer.sourceforge.net/), Craig Reynolds's C++ library of steering behaviours. In the words of the file header: "OpenSteer bindings for Lua, hand-crafted, far from complete."
 
+## Background
+
+The bindings were written in March 2007 for a course on intelligent agents at the Institute of Computer Science, University of Wrocław, whose project proposals had students program formations of boids in OpenSteer. With the bindings, an agent's behaviour is a Lua script and needs no C++.
+
+They were announced on the OpenSteer forum on 14 March 2007 and offered to the project: <https://sourceforge.net/p/opensteer/discussion/264792/thread/e9110c6f/>. Craig Reynolds replied there; the bindings were not taken into OpenSteer. The course's page with install instructions survives in the Wayback Machine: <http://web.archive.org/web/20090322210611/http://www.ii.uni.wroc.pl:80/~lukstafi/pmwiki/index.php?n=Agents.OpenSteer>.
+
 ## What is here
 
 - `LuaVehicle.h`, `LuaVehicle.cpp`: the bindings. A vehicle's behaviour is a Lua script that returns a steering force each step; vectors, pursuit, seeking, separation and neighbour queries are exposed to Lua.

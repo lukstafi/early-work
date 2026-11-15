@@ -7,4 +7,4 @@ Slides for a seminar talk given in early February 2008 at a students-and-faculty
 
 The talk reports on other people's work, credited on its last slide: "Proof by Pointing" by Bertot, Kahn and Théry (1994); "Extracting Text from Proof" by Coscoy, Kahn and Théry; the Coq 8.1 reference manual; and "Papuq: a Coq assistant" by Sakowicz and Chrząszcz (2007). Screenshots and figures in the slides are from those sources.
 
-The Coq library and exercises shown in the talk are not included, since they may be the Papuq authors' own.
+The Coq library and exercises shown in the talk are not included. They are not the speaker's: his homepage of the time listed them as "exemplary exercises from the Warsaw University Institute of Informatics".
