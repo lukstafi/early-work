@@ -8,7 +8,7 @@ Scripts and functions for a neural networks course: multilayer perceptrons initi
 
 `bayes-nets-earlier/` holds earlier generations of the Bayesian network scripts; `nowsze` is Polish for "newer" and `najnowsze` for "newest".
 
-The code calls two toolboxes that are not included: Netlab by Ian Nabney and the Bayes Net Toolbox by Kevin Murphy. `efficiency.m` is modified from Netlab's `confmat` and keeps its copyright line; `mlp3lfwd.m` follows Netlab's `mlpfwd`. The Spambase dataset is not included.
+The code calls two toolboxes that are not included: Netlab by Ian Nabney and the Bayes Net Toolbox by Kevin Murphy. Modified copies of toolbox functions that the scripts call (`learn_params2`, `learn_struct_K2_2`, `learn_struct_mcmc2`, `mlp3lfwd`) are left out as well, so the scripts do not run as they stand. `efficiency.m` is modified from Netlab's `confmat` and keeps its copyright line. The datasets are not included.
 
 ## data-mining (R and Octave, undated)
 
@@ -20,7 +20,7 @@ The datasets used by the scripts are not included.
 
 ## evolutionary-algorithms (Matlab and Octave, undated)
 
-Genetic algorithms (`SSGA.m`, `SSGAM.m`, `CGA.m`, `PBIL.m`), an evolution strategy (`SES.m`), simulated annealing (`SA.m`), objective functions (`ObjFunc_*.m`), encodings (`bit2gray.m`, `real2bit.m` and their inverses) and exercise scripts (`Ex01.m` onward). `later/` is a second, later set of the same files with more exercises.
+Genetic algorithms (`SSGA.m`, `SSGAM.m`, `CGA.m`, `PBIL.m`), an evolution strategy (`SES.m`), simulated annealing (`SA.m`), objective functions (`ObjFunc_*.m`), encodings (`bit2gray.m`, `real2bit.m` and their inverses) and exercise scripts (`Ex01.m` onward). `later/` is a second, later set of the same files with more exercises. The roulette-wheel selection routine they call came from another package and is not included.
 
 ## Licences
 
