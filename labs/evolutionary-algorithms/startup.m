@@ -1,0 +1,1 @@
+rmpath('/usr/local/share/octave/2.9.14/m/deprecated')
