@@ -1,0 +1,10 @@
+RED 20 20
+Carriers 10
+Flag 20 25 origin 20 20
+Flag 15 30 origin 20 25
+Flag 25 30 origin 20 25
+Warehouse 15 35 origin 15 30
+Warehouse 25 35 origin 25 30
+Redistribute 20 20 delays 5 40
+Redistribute 15 35 delays 5 40
+RoadSegment 15 35 to 25 35
