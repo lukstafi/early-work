@@ -1,0 +1,93 @@
+diff -r /mnt/win_d/luki/ode-0.5/include/ode/objects.h /home/luki/mlode-0.5/include/ode/objects.h
+94a95,102
+>   /* memory management */
+> 
+> void dMemSetDataBody (dBodyID id, void *memdata);
+> void dMemSetDataJoint (dJointID id, void *memdata);
+> void dMemSetDataGeom (dGeomID id, void *memdata);
+> void dMemSetFnAtDestroy (void (*FnAtDestroy) (void *memdata));
+> void dMemSetCondDestroy (int (*CondDestroy) (void *memdata));
+> 
+diff -r /mnt/win_d/luki/ode-0.5/ode/src/collision_kernel.cpp /home/luki/mlode-0.5/ode/src/collision_kernel.cpp
+188a189,195
+> // user memory management support
+> void dMemSetDataGeom (dGeomID id, void *memdata)
+> {
+>   id->usermeminfo = memdata;
+> }
+> 
+> 
+278a286
+>   if (dUserMemDestroy) dUserMemDestroy (g->usermeminfo);
+diff -r /mnt/win_d/luki/ode-0.5/ode/src/collision_kernel.h /home/luki/mlode-0.5/ode/src/collision_kernel.h
+106a107,108
+>   void *usermeminfo;	/* memory management */
+> 
+diff -r /mnt/win_d/luki/ode-0.5/ode/src/collision_space.cpp /home/luki/mlode-0.5/ode/src/collision_space.cpp
+86d85
+< 
+95c94,96
+<       dGeomDestroy (g);
+---
+>       if (!dUserMemCondition || dUserMemCondition(g->usermeminfo))
+> 	dGeomDestroy (g); 
+>       else remove (g);
+diff -r /mnt/win_d/luki/ode-0.5/ode/src/collision_transform.cpp /home/luki/mlode-0.5/ode/src/collision_transform.cpp
+184c184,188
+<   if (tr->obj && tr->cleanup) delete tr->obj;
+---
+>   if (tr->obj && tr->cleanup &&
+>       (!dUserMemCondition || dUserMemCondition (tr->obj->usermeminfo))) {
+>     if (dUserMemDestroy) dUserMemDestroy (tr->obj->usermeminfo);
+>     delete tr->obj;
+>   }
+diff -r /mnt/win_d/luki/ode-0.5/ode/src/joint.h /home/luki/mlode-0.5/ode/src/joint.h
+103a104
+> 
+125a127,129
+> 
+>   void *usermeminfo;		/* memory management */
+> 
+diff -r /mnt/win_d/luki/ode-0.5/ode/src/objects.h /home/luki/mlode-0.5/ode/src/objects.h
+54a55,59
+> // support for user memory management
+> 
+> //global variables defined in ode.cpp
+> extern void (*dUserMemDestroy) (void *);
+> extern int (*dUserMemCondition) (void *);
+107a113,114
+> 
+>   void *usermeminfo;		/* memory management */
+diff -r /mnt/win_d/luki/ode-0.5/ode/src/ode.cpp /home/luki/mlode-0.5/ode/src/ode.cpp
+232a233
+>   b->usermeminfo = NULL;
+258a260,282
+> // support for user memory management
+> 
+> //declared in src/objects.h
+> void (*dUserMemDestroy) (void *) = NULL;
+> int (*dUserMemCondition) (void *) = NULL;
+> 
+> void dMemSetDataBody (dBodyID id, void *memdata)
+> {
+>   id->usermeminfo = memdata;
+> }
+> void dMemSetDataJoint (dJointID id, void *memdata)
+> {
+>   id->usermeminfo = memdata;
+> }
+> //dMemSetDataGeom defined in collision_kernel.cpp
+> void dMemSetFnAtDestroy (void (*FnAtDestroy) (void *memdata))
+> {
+>   dUserMemDestroy = FnAtDestroy;
+> }
+> void dMemSetCondDestroy (int (*CondDestroy) (void *memdata))
+> {
+>   dUserMemCondition = CondDestroy;
+> }
+286a311
+>   if (dUserMemDestroy) dUserMemDestroy (b->usermeminfo);
+895a921
+>   j->usermeminfo = NULL;
+973a1000
+>   if (dUserMemDestroy) dUserMemDestroy (j->usermeminfo);
