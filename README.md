@@ -6,6 +6,7 @@ Programs and teaching material by Łukasz Stafiniak from 2003 to 2012, recovered
 |---|---|---|---|
 | [ox4d](ox4d) | 2003–2007 | OCaml, LablTk | Noughts-and-crosses in four dimensions, with a computer opponent |
 | [ocamlode](ocamlode) | 2005 | OCaml, C | Bindings to the Open Dynamics Engine, with a camlp4 syntax extension |
+| [bzu](bzu) | 2005–2006 | ST6 assembly | Firmware for an electrical safety circuit monitor and breaker, with Piotr Stafiniak |
 | [labs/neural-networks](labs) | 2005–2006 | Matlab | Laboratory code for a neural networks course |
 | [pmwiki-mode](pmwiki-mode) | 2007 | Emacs Lisp | An Emacs mode for editing PmWiki pages, releases 0.3 to 0.5rc2 |
 | [luasteer](luasteer) | 2007 | C++, Lua | Lua bindings for the OpenSteer steering library |

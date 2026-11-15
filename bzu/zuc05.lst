@@ -1,0 +1,1392 @@
+MACRO ASSEMBLER ZUC05                              01/28/106 12:43:27 PAGE     1
+
+
+WIN32 MACRO ASSEMBLER MAST6 V1.00.12
+OBJECT MODULE PLACED IN D:\BZU\ZUC05.OBJ
+ASSEMBLER INVOKED BY: MAST6.EXE D:\BZU\ZUC05.ASM CS ST6DERIVATIVE(ST6200C) DRBRMASK(00) DRBRADDR(0CB) OJ(D:\BZU\ZUC05.OBJ) PIN(D:\RIDE\INCST6) EP LINES PREPROST PR(D:\BZU\ZUC05.LST) XR DB ROMFILL(0XFF) PW(80) 
+
+LOC      OBJ            LINE     SOURCE
+                           1     .VERS "ST6263"
+                           2     .ROMSIZE 2
+                           3     ;;; analogowy pomiar B z opcja zatrzasku do pamieci, histereza + dl. impulsu + opozn. puszczenia + wersja wyjscia proby
+                           4     ;;; pomiar pradu stalego, wykazywanie poziomu pomiaru, opcje:
+                           5     ;;; (0) test kwantylowy (hipoteza: zmiana poziomu, test kwantylowy rzedu BEZWLAD/OKRES, test medianowy dla OKRES = 2*BEZWLAD)
+                           6     ;;; (1) dlugosc impulsu + opoznienie (dlugosc impulsu: CZASPOMB, opoznienie OPZNDIOD)
+                           7     ;;; (2) dlugosc impulsu + glosowanie (test medianowy, dlugosc impulsu: CZASPOMB)
+                           8     ;;; stan awaryjny: piki odfiltrowywane dlugoscia impulsu, (spadki odfiltrowywac?)
+                           9     ;;; synchronizacja progu 5 i diody B, histereza PROG5 / PUSCB na progu 5
+                          10     ;;; opcja wyjscia proby
+                          11     
+                          12     ;;; pomiar zasilania:
+                          13     ;;; wejscie:	PC4 (pin 18) analogowe
+                          14     ;;; pomiar z histereza ZASILANIE / ZASICHWYC
+                          15     ;;; pomiar B:
+                          16     ;;; wejscie:	PC3 (pin 19) analogowe
+                          17     ;;; wyjscia:	PB0 (pin 1) -- ledP i przekaznik; PB1 -- ledB, PA3 -- ledM; PB2, PB3, PB6, PB7, PA0, PA1, PA2 -- progi
+                          18     ;;; wyjscia push-pull
+                          19     ;;; pomiar B opcja zatrzask:
+                          20     ;;; zatrzask po impulsie dlugosci CZASPOMB na poziomie PROG5, zapis do pamieci EEPROM
+                          21     ;;; dlugosc impulsu dla kasowania TRZYMAJB * 255
+                          22     ;;; pomiar B opcja bez zatrzasku:	
+                          23     ;;; pomiar z histereza PROG5 / PUSCB, dlugosc impulsu CZASPOMB,
+                          24     ;;; dlugosc impulsu dla puszczenia TRZYMAJB * 255, zatrzask diody ledM
+                          25     ;;; funkcja ledM:
+                          26     ;;; w opcji z zatrzaskiem, ledM wykazuje przywrocenie zatrzasku zapamietanego przed resetem (zanikiem napiecia)
+                          27     ;;; w opcji bez zatrzasku, ledM wykazuje wystapienie pomiaru awaryjnego i nie gasnie az do skasowania
+                          28     ;;; w wersji bez ledM w opcji bez zatrzasku dioda M, kasowanie i pamiec EEPROM sa nieaktywne
+                          29     ;;; kasowanie zatrzasku:
+                          30     ;;; wejscie:	PC2 (pin 20) cyfrowe, zboczem opadajacym
+                          31     ;;; dlugosc impulsu KTRLKAS * 255, w opcji bez zatrzasku kasuje ledM
+                          32     ;;; kasowanie jest nieaktywne w trybie wyjscia proby
+                          33     ;;; opcja zatrzasku:
+                          34     ;;; wejscie:	PA3 (pin 13) analogowe,
+                          35     ;;; wlaczenie stanem ponizej POMZATRZ dlugosc impulsu wlaczajacego/wylaczajacego CZASZATRZ
+                          36     ;;; pomiar dokonywany okresowo (okres KTRLZAT * 255), dopiero w czasie kontroli impulsu w kazdym obiegu petli
+                          37     ;;; po restarcie pomiar dokonywany przed wejsciem do petli
+                          38     ;;; pamiec zatrzasku:
+                          39     ;;; wyjscie:	PA3 (pin 13) -- ledM
+                          40     ;;; jesli po restarcie opcja zatrzasku jest wlaczona i jest zapamietany zatrzask,
+                          41     ;;; jest on wlaczany i zapalana ledM
+                          42     ;;; przelaczanie opcji i dioda M:
+                          43     ;;; przy wlaczaniu opcji zatrzasku dioda M jest gaszona
+                          44     ;;; przy wylaczaniu opcji zatrzasku i swiecacej B (jest zatrzask) dioda M jest zaswiecana
+                          45     ;;; przy powrocie napiecia w opcji z zatrzaskiem, jesli przed zanikiem swiecila M, wchodzi zatrzask, swieca B i M
+                          46     ;;; wersja z wyjsciem proby:
+                          47     ;;; wejscie: PC2 (w trybie wejscia), wyjscie: PC2 (w trybie wysylania proby), PA3 (ledM)
+                          48     ;;; po sygnale na PC2 dlugosci WYJPROBY * 255 przelacza PC2 w wyjscie w stanie wysokim na czas DLPROBY * 255
+                          49     ;;; jednoczesnie mruga dioda ledM z okresem SYGPROBY * 255 * 2
+                          50     ;;; opoznienie startu:
+                          51     ;;; dodatkowa petla przed rozpoczeciem pomiarow (OPOZST)
+                          52     ;;; opoznienie po powrocie zasilania:
+                          53     ;;; OPOZAS dobrych pomiarow dopiero przywraca prace
+                          54     
+                          55     ;;; port C:	2 wej cyfrowe (wyjscie push-pull w trybie proby) 3,4 wej analogowe
+                          56     ;;; port B:	0-3, 6, 7 wyjscia push-pull
+                          57     ;;; port A:	0-3 wyjscia push-pull, 3 okresowo wejscie analogowe
+                          58     
+  0001                    59     LEDM		.equ	1	; funkcjonalnosc ledM (0 -- wylaczona)
+  0001                    60     DEBUG		.equ	1	; zawsze ustawiac DEBUG .equ 0
+  0001                    61     PROBA		.equ	1	; 1 -- wlaczona opcja proby, 0 -- wylaczana
+  0002                    62     TYPDIOD	.equ	2	; 0 -- test kwantylowy, 1 -- dlugosc impulsu + opoznienie, 2 -- dlugosc impulsu + glosowanie
+  0064                    63     OPOZST		.equ	100	; opoznienie startu - musi byc wieksze niz zero
+  0003                    64     KTRLKAS		.equ	3	; kontrola kasowania (starszy bajt) (1 bez opoznienia)- jak dlugo wcisniete, zeby uwzglednic
+                          65     	.IFC NE PROBA
+  0014                    66     WYJPROBY		.equ	20	; dlugosc stanu wysokiego na PC2 wyprowadzajaca probe
+  000A                    67     DLPROBY		.equ	10	; dlugosc trwania proby
+  0002                    68     SYGPROBY		.equ	2	; polowa okresu mrugania ledM w trybie wyjscia proby
+                          69     	.ENDC
+  000A                    70     KTRLZAT		.equ	10	; kontrola opcji zatrzasku (starszy bajt)
+  0076                    71     ZASILANIE	.equ	118	; 118 = czesc calkowita z 256 * 0.49 * 4.7 / 5 (jest 14,6V~tj.0,60Uz)
+  00A8                    72     ZASICHWYC	.equ	168   ; 168 =                   256 * 0.7 * 4.7 / 5 (ok.0,75Uz)
+  0064                    73     OPOZAS		.equ	100	; opoznienie przy powrocie zasilania
+  0032                    74     POMZATRZ	.equ	50	; ok 1V prog wylaczenia zatrzasku
+  0064                    75     CZASZATRZ	.equ	100	; dlugosc impulsu dla opcji zatrzasku
+  0003                    76     TRZYMAJB	.equ	3	; opoznienie puszczenia B (starszy bajt)
+  005A                    77     CZASPOMB	.equ	90	; wymagany czas pomiaru B (dlugosc impulsu)(90x0,6ms=54ms)
+                          78     	.IFC EQ TYPDIOD
+                                 OKRES		.equ	100	; suma pomiarow na zmiane stanu diod
+                                 BEZWLAD	.equ	70	; ilosc pomiarow pozwalajacych na zmiane,grawitacja
+                                 	.ENDC
+                          82     	.IFC EQ TYPDIOD-1
+  0064                    83     OPZNDIOD	.equ	100	; opoznienie powrotu do poprzedniego poziomu diod
+                          84     	.ENDC
+                          85     	.IFC EQ TYPDIOD-2
+  0004                    86     KWORUM	.equ	4		; ilosc impulsow przyp. na glosowanie (powinna byc parzysta!)
+  0003                    87     BEZWLAD	.equ	(KWORUM/2)+1
+                          88     	.ENDC
+                          89     	;; (hipoteza: zmiana poziomu, test kwantylowy rzedu BEZWLAD/OKRES)
+  0005                    90     PROG1		.equ	5	; progi pomiarowe
+  0008                    91     PROG2		.equ	8
+  0017                    92     PROG3		.equ	23
+  0038                    93     PROG4		.equ	56
+  0050                    94     PUSCB		.equ	80
+  0052                    95     PROG5		.equ	82
+  0079                    96     PROG6		.equ	121
+  0093                    97     PROG7		.equ	147
+                          98     
+                          99     ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+                         100     ;; struktura programu:
+                         101     ; 1. definicje stalych programu
+                         102     ; 2. definicje adresow zmiennych i rejestrow
+                         103     ; 3. tekst informujacy o ustawieniach
+                         104     ; 4. INIT: poczatek programu, inicjalizacja zmiennych i ustawien rejestrow
+                         105     ; 5. OPOZST1: opoznienie wejscia do petli glownej
+                         106     ; 6. ZATRZOPC-ZATRZKON: pomiar opcji zatrzasku, inicjalizacja ledM z pamieci
+                         107     ; filtrowanie: ktora opcja pierwsza przekroczy CZASZATRZ pomiarow
+                         108     ; 7. PETLA-USTAWB: petla glowna, kontrola zasilania, powrot z braku zasilania
+                         109     ; 8. PRACA: czesc robocza petli
+                         110     ; 9. ROBPOM1-RMNIEJ: pomiar B z okresleniem poziomu na pasku diod
+                         111     ; 9a. HISTEREZA-DOPAMIECI: synchronizacja pomiaru B z poziomem 5, zatrzask pomiaru B
+                         112     ; 10. JUZSWIEC-POZMIANIE: wyswietlenie stanu na pasku diod (tylko w cyklach, w ktorych zmiana)
+                         113     ; 11. TESTGUZIK-POTESCIE: obsluga guzika kasowania, przeprowadzenie kasowania i wysylanie proby
+                         114     ; 11a. KROKPROBA-KONPROBY: obsluga wysylania proby
+                         115     ; 12. OPOZNIENIE-OPOZN3: opoznienie chwycenia przekaznika i zgaszenia ledB
+                         116     ; 13. DOZMZATRZ-NIECZYSC: pomiar opcji zatrzasku i obsluga przelaczenia opcji zatrzasku
+                         117     ; 14. DO4PETLI: zapetlij
+                         118     ; 15. PISZPAMV-CZYTPAMA: funkcje pomocnicze
+                         119     ; PRZYWRM: zaswieca ledM wtw gdy MSTAN
+                         120     ; 16. ADCINT-NMINT: przerwania	
+                         121     ; 17. ustawienie przerwan (i poczatku programu - przerwanie RESET)
+                         122     ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+                         123     
+                         124     
+  00FF                   125     A	.def 0ffh		; akumulator
+  0080                   126     X     .def 080h			; rejestr adresowy
+  0081                   127     Y	.def 081h		; rejestr adresowy
+  0082                   128     V     .def 082h		; rejestr danych
+  0083                   129     W     .def 083h		; rejestr danych
+  0084                   130     GUST	.def 084h	; starszy bajt licznika przycisku kasowania (czy dosc dlugo trzymany) liczy w gore
+  0085                   131     GUML	.def 085h	; mlodszy bajt przycisku kasowania (odlicza w dol)
+  0086                   132     PBST	.def 086h	; starszy bajt opoznienia puszczenia B
+  0087                   133     PBML	.def 087h	; mlodszy bajt opoznienia puszczenia B
+  0088                   134     BTRZ	.def 088h	; znacznik trzymania blednego pomiaru (tzn. ledB swieci, Pk nie trzyma)
+  0089                   135     POMB	.def 089h	; bajt odliczania w dol blednych pomiarow B
+  008A                   136     ZATRZ	.def 08ah		; opcja z zatrzaskiem czy bez
+                         137     	.IFC EQ TYPDIOD
+                                 WIEKSZ	.def 08bh	; ilosc przekroczen ponad POZIOM
+                                 MNIEJ	.def 08ch	; ilosc spadkow ponizej POZIOM
+                                 CZAS	.def 08dh	; licznik petli - odmierza "okresy" pomiarowe
+                                 	.ENDC
+                         142     	.IFC EQ TYPDIOD-1
+  008B                   143     DIKIER	.def 08bh	; kierunek zmian na diodach: 1 -- wzrost, 2 -- spadek
+  008C                   144     DIPOMZM	.def 08ch	; zliczanie dlugosci impulsu w kierunku zmiany
+  008D                   145     DIOPOZ	.def 08dh	; licznik opoznienia na diodach
+  008E                   146     DIPOMPZ	.def 08eh	; zliczanie dlugosci impulsu dla pozostania na wykazywanym pozmiomie
+                         147     	.ENDC
+                         148     	.IFC EQ TYPDIOD-2
+  008B                   149     WIEKSZ	.def 08bh	; ilosc impulsow ponad POZIOM
+  008C                   150     MNIEJ	.def 08ch	; ilosc impulsow ponizej POZIOM
+  008D                   151     CZAS	.def 08dh	; licznik petli - zlicza impulsy
+  008E                   152     DIWIEKSZ	.def 08eh	; zliczanie dlugosci impulsu ponad POZIOM
+  008F                   153     DIMNIEJ	.def 08fh	; zliczanie dlugosci impulsu ponizej POZIOM
+                         154     	.ENDC
+  0090                   155     POZIOM	.def 090h	; aktualnie wykazywany poziom
+  0091                   156     MSTAN	.def 091h		; stan diody M (tzn. 3, DRA)
+  0092                   157     ZASOPOZ .def 092h		; licznik opoznienia przy powrocie zasilania
+  0093                   158     JESTZAT	.def 093h		; licznik pomiarow na wlaczenie zatrzasku (ponizej progu)
+  0094                   159     NIEZAT	.def 094h		; licznik pomiarow na wylaczenie zatrzasku (powyzej progu)
+  0095                   160     ZATST	.def 095h		; starszy bajt licznika kontroli opcji zatrzasku
+  0096                   161     ZATML	.def 096h		; mlodszy --||--
+  0097                   162     STANORC	.def 097h	; aktualne ustawienie portu C
+  0004                   163     ORCWYJPR	.equ 100b	; mozliwe wartosci opcji portu C
+  0000                   164     ORCKAS	.equ 0		;
+                         165     	.IFC NE PROBA
+  0098                   166     PROBST	.def 098h	; starszy bajt licznika wyprowadzania proby (jako mlodszy bajt KAML)
+  0099                   167     PROBML	.def 099h
+  009A                   168     MIGMST	.def 09ah	; licznik mrugania ledM w czasie wyprowadzania proby
+                         169     	.ENDC
+                         170     	.IFC NE DEBUG		; wersja DEBUGgera
+  009D                   171     DBZASIL	.def 09dh		; wartosc pomiaru zasilania
+  009E                   172     DBPOMB	.def 09eh		; wartosc pomiaru B
+  009F                   173     DBZATRZ	.def 09fh		; wartosc pomiaru trybu zatrzasku
+  00A0                   174     DBGUZIK	.def 0a0h		; stan guzika kasowania
+                         175     	.ENDC
+                         176     	
+  0000                   177     PAMIEC	.def 000h		; pamiec zatrzasku (jesli =/= 0 byl zatrzask)
+                         178     
+                         179     
+  00C0                   180     DRA   .def 0c0h		; pierwszy port
+  00C4                   181     DDRA	.def 0c4h		
+  00CC                   182     ORA	.def 0cch
+  00C1                   183     DRB	.def 0c1h      ; drugi port
+  00C5                   184     DDRB	.def 0c5h
+  00CD                   185     ORB	.def 0cdh
+  00C2                   186     DRC	.def 0c2h      ; trzeci port
+  00C6                   187     DDRC	.def 0c6h
+  00CE                   188     ORC	.def 0ceh
+  00D1                   189     ADCR	.def 0d1h		; przetwornik A/D
+  00D0                   190     ADR	.def 0d0h
+  00D8                   191     WDR	.def 0d8h		; watchdog - resetowanie przy pozostawaniu poza petla
+  00C8                   192     IOR	.def 0c8h		; rejestr przerwan
+  00E8                   193     DRBR	.def 0e8h	; Data RAM/EEPROM Bank Register
+  00EA                   194     EECTL	.def 0eah	; EEPROM Control Register
+                         195     			
+------ ------------      196     	.ORG 0880H
+                         197     	.IFC NE DEBUG
+0880   5445535420        198     	.ASCII "TEST "
+                         199     	.DISPLAY "NIE NAGRYWAC TEJ WERSJI! TO WERSJA TESTOWA."
+                         200     	.ELSE
+                                 	.ASCII "ZUC05 "
+                                 	.ENDC
+                         203        .IFC EQ LEDM
+                                    .ASCII "nM "
+                                    .DISPLAY "BZU-O5 WERSJA BEZ DIODY M. "
+                                    .ELSE
+0885   4D20              207        .ASCII "M "
+                         208        .DISPLAY "BZU-05 WERSJA LED-M. "
+                         209        .ENDC
+                         210        .IFC EQ PROBA
+                                    .ASCII "nPR "
+                                    .DISPLAY "Bez opcji proby."
+                                    .ELSE
+0887   505220            214        .ASCII "PR "
+                         215        .DISPLAY "Z opcja proby."
+                         216        .ENDC
+                         217        .IFC EQ TYPDIOD
+                                    .ASCII "KW"
+                                    .DISPLAY "Z filtrowaniem diod przez test kwantylowy."
+                                    .ENDC
+                         221        .IFC EQ TYPDIOD-1
+088A   494F              222        .ASCII "IO"
+                         223        .DISPLAY "Z filtrowaniem diod przez dlugosc impulsu i opoznienie."
+                         224        .ENDC
+                         225        .IFC EQ TYPDIOD-2
+088C   4947              226        .ASCII "IG"
+                         227        .DISPLAY "Z filtrowaniem diod przez dlugosc impulsu i glosowanie."
+                         228        .ENDC
+                         229        
+------ ------------      230     	.ORG 0890H		; adres poczatku programu
+                         231     
+                         232     INIT
+0890   0DD8FE            233     	LDI WDR, 11111110b		; watchdog
+0893   0DD190            234     	LDI ADCR, 10010000b      ; wlacz przetwornik A/D, pozwol mu sie ustabilizowac
+0896   04                235     	NOP        
+0897   04                236     	NOP
+0898   0DC407            237     	LDI DDRA,   00000111b      ; PA0-2 5-7 prog, PA3 pomiar opcji zatrzasku
+089B   0DCC0F            238     	LDI ORA,    00001111b   
+089E   0DC008            239     	LDI DRA,    00001000b		; zgas diody
+08A1   0DC5CF            240     	LDI DDRB,   11001111b		; PB0 ledP, PB1 ledB, PB2-3 PB6-7 1-4 prog
+08A4   0DCDCF            241     	LDI ORB,    11001111b		; 
+08A7   0DC100            242     	LDI DRB,    00000000b		; 
+08AA   0DC600            243     	LDI DDRC,   00000000b		;
+08AD   0DCE00            244     	LDI ORC,    00000000b		;
+08B0   0D9700            245     	LDI STANORC, ORCKAS			; = 0
+08B3   0DC21C            246     	LDI DRC,    00011100b		; PC2 wej kas bez pull-up, PC3 pom B, PC4 zasilanie
+08B6   0DE801            247     	LDI DRBR, 01h		; EEPROM Page 0
+08B9   0DEA00            248     	LDI EECTL, 00000000b		; pozwol na czytanie z EEPROM
+08BC   0D950A            249     	LDI ZATST, KTRLZAT		; znacznik przerwania
+08BF   0D96FF            250     	LDI ZATML, 255
+08C2   0D8400            251     	LDI GUST, 0
+08C5   0D8500            252     	LDI GUML, 0
+                         253     	
+08C8   0DC810            254     	LDI IOR,	00010000b		; uwzglednij przerwanie budzace po pomiarze napiecia
+08CB   0D8000            255     	LDI X,		0
+08CE   0D8200            256     	LDI V,		0
+08D1   0D8364            257     	LDI W,		OPOZST
+                         258     
+08D4   0D895A            259     	LDI POMB,	CZASPOMB
+08D7   0D8603            260     	LDI PBST,	TRZYMAJB		; nie chwytaj od razu
+08DA   0D87FF            261     	LDI PBML,	255
+08DD   0D8800            262     	LDI BTRZ,	0
+08E0   0D9100            263     	LDI MSTAN, 0
+08E3   0D9000            264     	LDI POZIOM, 0		; wyzeruj poziom pomiaru
+                         265     	.IFC EQ TYPDIOD
+                                 	LDI WIEKSZ, 0
+                                 	LDI MNIEJ, 0
+                                 	LDI CZAS, OKRES	; co ile aktualizuje diody (zatrzask wykazywania odfiltrowuje spadki)
+                                 	.ENDC
+                         270     	.IFC EQ TYPDIOD-1
+08E6   0D8B01            271     	LDI DIKIER, 1	; kierunek zmian na diodach: 1 -- wzrost, 2 -- spadek
+08E9   0D8C5A            272     	LDI DIPOMZM, CZASPOMB	; zliczanie dlugosci impulsu w kierunku zmiany
+08EC   0D8D64            273        LDI DIOPOZ, OPZNDIOD		; licznik opoznienia na diodach
+08EF   0D8E5A            274     	LDI DIPOMPZ,	CZASPOMB		; zliczanie dlugosci impulsu dla pozostania na wykazywanym pozmiomie
+                         275     	.ENDC
+                         276     	.IFC EQ TYPDIOD-2
+08F2   0D8B00            277     	LDI WIEKSZ, 0
+08F5   0D8C00            278     	LDI MNIEJ, 0
+08F8   0D8D04            279     	LDI CZAS, KWORUM	; co ile aktualizuje diody (zatrzask wykazywania odfiltrowuje spadki)
+08FB   0D8E5A            280     	LDI DIWIEKSZ, CZASPOMB	; zliczanie dlugosci impulsu
+08FE   0D8F5A            281     	LDI DIMNIEJ, CZASPOMB	; zliczanie dlugosci impulsu
+                         282     	.ENDC
+0901   0D9300            283     	LDI JESTZAT, 0
+0904   0D9400            284     	LDI NIEZAT, 0
+                         285     	.IFC NE PROBA
+0907   0D9800            286     	LDI PROBST, 0			; PROB > 0 oznacza tryb wysylania proby
+090A   0D9900            287     	LDI PROBML, 0
+090D   0D9A00            288     	LDI MIGMST, 0
+                         289     	.ENDC
+                         290     	.IFC NE DEBUG
+                         291     	;; wartosci poczatkowe wejsc
+0910   0D9D00            292     	LDI DBZASIL, 0
+0913   0D9F00            293     	LDI DBZATRZ, 0
+0916   0DA000            294     	LDI DBGUZIK, 0
+0919   0D9E00            295     	LDI DBPOMB, 0
+                         296     	.ENDC
+                         297     
+091C   4D                298     	RETI
+                         299     
+                         300     OPOZST1 ; petla opoznienia wejscia do petli glownej
+091D   0DD8FE            301     	LDI WDR, 11111110b		; watchdog
+0920   DD                302     	DEC W
+0921   04          F     303     	JRZ DAJW
+0922   0D82FF            304     	LDI V, 255
+                         305     OPOZST2
+0925   9D                306     	DEC V				; odliczanie
+0926   00          F     307     	JRNZ OPOZST2
+0927   0900        F     308     	JP OPOZST1
+                         309     DAJW
+0929   0D8300            310     	LDI W, 0
+                         311     
+                         312     ZATRZOPC			; pomiar opcji zatrzasku
+092C   0DD8FE            313     	LDI WDR, 11111110b		; watchdog
+092F   DBCC              314     	SET 3, ORA		; ustaw PA3 do przetwarzania A/D
+0931   04                315     	NOP
+0932   04                316     	NOP
+0933   04                317     	NOP
+0934   04                318     	NOP
+0935   0DD1B0            319     	LDI ADCR, 10110000b
+                         320     	.IFC EQ DEBUG
+                                 	WAIT		; Czekaj na wynik pomiaru - wczytany do akumulatora
+                                 	.ELSE
+0938   1F9F              323     	LD A, DBZATRZ		; DEBUG
+                         324     	.ENDC
+                         325     	
+093A   3732              326     	CPI A, POMZATRZ		; sprawdz czy napiecie na wlasciwym poziomie
+093C   06          F     327     	JRC PONIZAT
+093D   7F94              328     	INC NIEZAT
+093F   0D9300            329     	LDI JESTZAT, 0
+0942   0900        F     330     	JP ZATRZSPR
+                         331     PONIZAT
+0944   7F93              332     	INC JESTZAT
+0946   0D9400            333     	LDI NIEZAT, 0
+                         334     ZATRZSPR
+0949   1F93              335     	LD A, JESTZAT
+094B   3764              336     	CPI A, CZASZATRZ
+094D   02          F     337     	JRNC ZATJEST
+094E   1F94              338     	LD A, NIEZAT
+0950   3764              339     	CPI A, CZASZATRZ
+0952   02          F     340     	JRNC ZATNIE
+0953   0900        F     341     	JP ZATRZOPC
+                         342     ZATJEST
+0955   0D8AFF            343     	LDI ZATRZ, 255
+0958   0900        F     344     	JP ZATRZKON
+                         345     ZATNIE
+095A   0D8A00            346     	LDI ZATRZ, 0
+                         347     	.IFC EQ LEDM		; wersja bez ledM -- czysc pamiec
+                                 	CALL CZYTPAMA
+                                 	JRZ ZATRZKON
+                                 	LDI V, 0
+                                 	CALL PISZPAMV
+                                 	.ENDC
+                         353     	
+                         354     ZATRZKON
+095D   0D9300            355     	LDI JESTZAT, 0
+0960   0D9400            356     	LDI NIEZAT, 0
+0963   CBCC              357     	RES 3, ORA		; PA3 ledM
+0965   DBC4              358     	SET 3, DDRA
+0967   DBCC              359     	SET 3, ORA
+0969   CBC0              360     	RES 3, DRA		; zgas ledM
+096B   0D9100            361     	CLR MSTAN
+                         362     	.IFC EQ LEDM		; wersja bez pamieci
+                                 	JRS 0, ZATRZ, ROBZATRZ
+                                 	JP PETLA
+                                 ROBZATRZ
+                                 	.ENDC
+                         367     	;; sprawdzenie czy zatrzask w pamieci
+096E   0100        F     368     	CALL CZYTPAMA
+0970   00          F     369     	JRNZ ZASWIECM
+0971   0900        F     370     	JP PETLA
+                         371     ZASWIECM
+0973   DBC0              372     	SET 3, DRA		; zaswiec M
+0975   0D91FF            373     	LDI MSTAN, 255
+                         374     	.IFC NE LEDM		; wersja z ledM wymaga sprawdzenia opcji
+0978   038A00      F     375     	JRR 0, ZATRZ, PETLA
+                         376     	.ENDC
+097B   0D88FF            377     	LDI BTRZ, 255
+097E   9BC1              378     	SET 1, DRB		; przywroc swiecenie B (zatrzasniete)
+0980   0D8600            379     	LDI PBST, 0		; wylacz opoznienie (ktore by skasowalo zatrzask)
+0983   0D8700            380     	LDI PBML, 0
+                         381     	
+                         382     PETLA
+0986   0DD8FE            383     	LDI WDR, 11111110b		; watchdog
+                         384     
+                         385     	; Kontrola zrodla zasilania **********************************************
+                         386     
+0989   1F97              387     	LD A, STANORC
+098B   2D                388     	COM A
+098C   B7EF              389     	ANDI A, 11101111b
+098E   2D                390     	COM A
+098F   9FCE              391     	LD ORC, A		; ustaw PC4 do przetwarzania A/D
+0991   04                392     	NOP
+0992   04                393     	NOP
+0993   04                394     	NOP
+0994   04                395     	NOP
+0995   0DD1B0            396     	LDI ADCR, 10110000b	; zacznij przetwarzanie napiecia zasilajacego
+                         397     	.IFC EQ DEBUG
+                                 	WAIT		; Czekaj na wynik pomiaru - wczytany do akumulatora
+                                 	.ELSE
+0998   1F9D              400     	LD A, DBZASIL		; DEBUG
+                         401     	.ENDC
+099A   3776              402     	CPI A, ZASILANIE		; sprawdz czy napiecie na wlasciwym poziomie
+099C   06          F     403     	JRC POWER
+099D   0900        F     404     	JP PRACA
+                         405     POWER
+099F   0DD8FE            406     	LDI WDR, 11111110b		; watchdog
+                         407     	;LD A, DRA		; zapamietaj ledM
+                         408     	;LD W, A
+09A2   0DC000            409     	LDI DRA, 00000000b	; Jesli slabe napiecie zgas wszystkie diody
+09A5   0DC100            410     	LDI DRB, 00000000b	; 
+                         411     
+09A8   1F97              412     	LD A, STANORC
+09AA   2D                413     	COM A
+09AB   B7EF              414     	ANDI A, 11101111b
+09AD   2D                415     	COM A
+09AE   9FCE              416     	LD ORC, A		; ustaw PC4 do przetwarzania A/D
+09B0   04                417     	NOP
+09B1   04                418     	NOP
+09B2   04                419     	NOP
+09B3   04                420     	NOP
+09B4   0DD1B0            421     	LDI ADCR, 10110000b	; zacznij przetwarzanie
+                         422     	.IFC EQ DEBUG
+                                 	WAIT		; Czekaj na wynik pomiaru - wczytany do akumulatora
+                                 	.ELSE
+09B7   1F9D              425     	LD A, DBZASIL		; DEBUG
+                         426     	.ENDC
+09B9   37A8              427     	CPI A, ZASICHWYC		; sprawdz czy napiecie na wlasciwym poziomie
+09BB   02          F     428     	JRNC ZASOK
+09BC   0D9264            429     	LDI ZASOPOZ, OPOZAS
+09BF   0900        F     430     	JP POWER
+                         431     ZASOK
+09C1   FF92              432     	DEC ZASOPOZ
+09C3   04          F     433     	JRZ PRZYWROT
+09C4   0900        F     434     	JP POWER
+                         435     PRZYWROT
+09C6   0D9264            436     	LDI ZASOPOZ, OPOZAS
+                         437     	.IFC NE LEDM
+09C9   038A00      F     438     	JRR 0, ZATRZ, PRZYWR2
+09CC   0100        F     439     	CALL PRZYWRM
+                         440     PRZYWR2
+                         441     	.ENDC
+09CE   0D895A            442     	LDI POMB, CZASPOMB	; anuluj rezultaty sprzed spadku
+09D1   0D9400            443     	LDI NIEZAT, 0
+09D4   0D8600            444     	LDI PBST, 0				; jesli potrzebne opoznienie, ustawione ponizej
+09D7   0D8700            445     	LDI PBML, 0
+09DA   1F88              446     	LD A, BTRZ
+09DC   BF8A              447     	AND A, ZATRZ
+09DE   00          F     448     	JRNZ USTAWB
+09DF   0D8603            449     	LDI PBST, TRZYMAJB	; wymus opoznienie po powrocie napiecia
+09E2   0D87FF            450     	LDI PBML, 255
+09E5   1F88              451     	LD A, BTRZ 				; opoznienie chwycenia Pk nawet gdy ledB nie swieci
+09E7   00          F     452     	JRNZ USTAWB
+09E8   0900        F     453     	JP JUZSWIEC
+                         454     USTAWB
+09EA   9BC1              455     	SET 1, DRB		; przywroc swiecenie B (zatrzasniete lub opoznione)
+09EC   0900        F     456     	JP JUZSWIEC
+                         457     PRACA
+                         458     
+09EE   0DD8FE            459     	LDI WDR, 11111110b		; watchdog
+                         460     
+                         461     	
+                         462     RODBPOMB1
+                         463     	;; impuls przekraczajacy ustawi nr progu
+09F1   1F97              464     	LD A, STANORC
+09F3   2D                465     	COM A 
+09F4   B7F7              466        ANDI A, 11110111b			; ustaw PC3 do przetwarzania A/D
+09F6   2D                467     	COM A
+09F7   9FCE              468     	LD ORC, A
+09F9   04                469     	NOP
+09FA   04                470     	NOP
+09FB   04                471     	NOP
+09FC   04                472     	NOP
+09FD   0DD1B0            473     	LDI ADCR, 10110000b	; zacznij konwersje
+                         474     	.IFC EQ DEBUG
+                                 	WAIT		; Czekaj na wynik pomiaru - wczytany do akumulatora
+                                 	.ELSE
+0A00   1F9E              477     	LD A, DBPOMB
+                         478     	.ENDC
+                         479     
+                         480     
+                         481     	;;porownaj z progami pomiarowymi
+0A02   0D8300            482     	LDI W, 0
+0A05   3705              483     	CPI A, PROG1
+0A07   02          F     484     	JRNC POMIAR2
+0A08   0900        F     485     	JP FINDOBRY
+                         486     POMIAR2
+0A0A   D5                487     	INC W
+0A0B   3708              488     	CPI A, PROG2
+0A0D   02          F     489     	JRNC POMIAR3
+0A0E   0900        F     490     	JP FINDOBRY
+                         491     POMIAR3
+0A10   D5                492     	INC W
+0A11   3717              493     	CPI A, PROG3
+0A13   02          F     494     	JRNC POMIAR4
+0A14   0900        F     495     	JP FINDOBRY
+                         496     POMIAR4
+0A16   D5                497     	INC W
+0A17   3738              498     	CPI A, PROG4
+0A19   02          F     499     	JRNC POMIAR5
+0A1A   0900        F     500     	JP FINDOBRY
+                         501     POMIAR5
+0A1C   D5                502     	INC W
+0A1D   038800      F     503     	JRR 0, BTRZ, BEZHIST
+0A20   3750              504     	CPI A, PUSCB
+0A22   02          F     505     	JRNC HISTEREZA
+0A23   0900        F     506     	JP FINDOBRY
+                         507     HISTEREZA			; synchronizacja progu 5 i ledB
+0A25   3D                508     	LD X, A
+0A26   FF89              509     	DEC POMB
+0A28   04          F     510     	JRZ ZATRZYMAJ
+0A29   0900        F     511     	JP POMIAR6
+                         512     ZATRZYMAJ			; przekroczenie progu 5 powoduje zatrzask
+0A2B   0D895A            513     	LDI POMB, CZASPOMB
+0A2E   0D8600            514     	LDI PBST, 0	; zapomnij o kasowaniu w opcji z zatrzaskiem
+0A31   0D8700            515     	LDI PBML, 0
+                         516     	;; diody juz swieca
+0A34   138A00      F     517     	JRS 0, ZATRZ, POMIAR6
+0A37   0D8603            518     	LDI PBST, TRZYMAJB	; opoznienie B startuje za kazdym zlym pomiarem
+0A3A   0D87FF            519     	LDI PBML, 255			; opoznienie B - mniej znaczacy rejestr
+0A3D   0900        F     520     	JP POMIAR6		; omijanie zapisu do pamieci, jesli opcja bez zatrzasku
+                         521     BEZHIST
+0A3F   3752              522     	CPI A, PROG5
+0A41   02          F     523     	JRNC AWARYJNY
+0A42   0900        F     524     	JP FINDOBRY
+                         525     AWARYJNY			; synchronizacja progu 5 i ledB
+                         526     	;;przed pomiarem uwzglednic zatrzask -- prog 5 przekroczony
+0A44   3D                527     	LD X, A		; X przechowuje wynik pomiaru (do wznowienia porownan w POMIAR6)
+0A45   FF89              528     	DEC POMB
+0A47   04          F     529     	JRZ ZATRZASK
+0A48   0900        F     530     	JP FINISZ
+                         531     ZATRZASK			; przekroczenie progu 5 powoduje zatrzask
+0A4A   0D895A            532     	LDI POMB, CZASPOMB
+0A4D   0D88FF            533     	LDI BTRZ, 255	; zapomnij o kasowaniu
+0A50   0D8600            534     	LDI PBST, 0
+0A53   0D8700            535     	LDI PBML, 0
+0A56   0BC1              536     	RES 0, DRB		; zgas LED-P
+0A58   9BC1              537     	SET 1, DRB		; wlacz LED-B
+0A5A   138A00      F     538     	JRS 0, ZATRZ, DOPAMIECI
+                         539     	;; w trybie bez zatrzasku:
+0A5D   0D8603            540     	LDI PBST, TRZYMAJB	; opoznienie B startuje za kazdym zlym pomiarem
+0A60   0D87FF            541     	LDI PBML, 255			; opoznienie B - mniej znaczacy rejestr
+                         542     	.IFC EQ LEDM		; wersja bez ledM
+                                 	JP POMIAR6
+                                 	.ENDC
+0A63   DBC0              545     	SET 3, DRA		; pamietaj awaryjny pomiar
+0A65   0D91FF            546     	LDI MSTAN, 255
+                         547     DOPAMIECI
+0A68   0D82FF            548     	LDI V, 255
+0A6B   0100        F     549     	CALL PISZPAMV
+                         550     	;;wlasciwy pomiar 6
+                         551     POMIAR6
+0A6D   D5                552     	INC W
+0A6E   35                553     	LD A, X
+0A6F   3779              554     	CPI A, PROG6
+0A71   02          F     555     	JRNC POMIAR7
+0A72   0900        F     556     	JP FINISZ
+                         557     POMIAR7
+0A74   D5                558     	INC W
+0A75   3793              559      	CPI A, PROG7
+0A77   02          F     560     	JRNC POMPROG7
+0A78   0900        F     561     	JP FINISZ
+                         562     POMPROG7
+0A7A   D5                563     	INC W
+0A7B   0900        F     564     	JP FINISZ
+                         565     FINDOBRY
+0A7D   0D895A            566     	LDI POMB, CZASPOMB
+                         567     FINISZ
+0A80   1F90              568     	LD A, POZIOM
+0A82   3F83              569     	CP A, W
+0A84   02          F     570     	JRNC MWIEKSZN
+0A85   0900        F     571     	JP MWIEKSZ
+                         572     MWIEKSZN
+0A87   04          F     573     	JRZ MMNIEJN
+0A88   0900        F     574     	JP MMNIEJ
+                         575     MMNIEJN
+                         576            ; *** Pozostanie na tym samym poziomie
+                         577     	.IFC EQ TYPDIOD
+                                 	JP KROK
+                                 	.ENDC
+                         580     
+                         581        .IFC EQ TYPDIOD-1
+0A8A   0D8C5A            582     	LDI DIPOMZM, CZASPOMB
+0A8D   FF8E              583     	DEC DIPOMPZ
+0A8F   04          F     584     	JRZ DIREOPZN
+0A90   0900        F     585     	JP TESTGUZIK
+                         586     DIREOPZN
+0A92   0D8E5A            587     	LDI DIPOMPZ, CZASPOMB
+0A95   0D8D64            588     	LDI DIOPOZ, OPZNDIOD
+0A98   0900        F     589     	JP TESTGUZIK
+                         590     	.ENDC
+                         591     
+                         592     	.IFC EQ TYPDIOD-2
+0A9A   0D8E5A            593     	LDI DIWIEKSZ, CZASPOMB
+0A9D   0D8F5A            594     	LDI DIMNIEJ, CZASPOMB
+0AA0   0900        F     595     	JP TESTGUZIK	
+                         596     	.ENDC
+                         597     	
+                         598     MWIEKSZ
+                         599     		; *** Wzrost poziomu
+                         600     	.IFC EQ TYPDIOD
+                                 	INC WIEKSZ
+                                 	JP KROK
+                                 	.ENDC
+                         604     	
+                         605     	.IFC EQ TYPDIOD-1
+0AA2   1F8B              606     	LD A, DIKIER
+0AA4   3701              607     	CPI A, 1
+0AA6   04          F     608     	JRZ ZGODWIEK
+0AA7   0D8C5A            609     	LDI DIPOMZM, CZASPOMB
+0AAA   FF8D              610     	DEC DIOPOZ
+0AAC   04          F     611     	JRZ WZROST
+0AAD   0900        F     612     	JP TESTGUZIK
+                         613     ZGODWIEK
+0AAF   0D8D64            614     	LDI DIOPOZ, OPZNDIOD
+0AB2   FF8C              615     	DEC DIPOMZM
+0AB4   04          F     616     	JRZ WZROST
+0AB5   0900        F     617     	JP TESTGUZIK
+                         618     WZROST
+0AB7   0D8C5A            619     	LDI DIPOMZM, CZASPOMB
+0ABA   0D8D64            620     	LDI DIOPOZ, OPZNDIOD
+0ABD   0D8E5A            621     	LDI DIPOMPZ, CZASPOMB
+0AC0   0D8B01            622     	LDI DIKIER, 1
+0AC3   7F90              623     	INC POZIOM
+0AC5   0900        F     624     	JP JUZSWIEC
+                         625     	.ENDC
+                         626     	
+                         627     	.IFC EQ TYPDIOD-2
+0AC7   0D8F5A            628     	LDI DIMNIEJ, CZASPOMB
+0ACA   FF8E              629     	DEC DIWIEKSZ
+0ACC   04          F     630     	JRZ WZROST
+0ACD   0900        F     631     	JP TESTGUZIK
+
+*** ERROR #11 IN LINE 632 OF zuc05.asm : ATTEMPT TO REDEFINE SYMBOL 'WZROST'
+0ACD   0900        F     632     WZROST
+0ACF   0D8E5A            633     	LDI DIWIEKSZ, CZASPOMB
+0AD2   7F8B              634     	INC WIEKSZ
+0AD4   FF8D              635     	DEC CZAS
+0AD6   04          F     636     	JRZ DODIZM
+0AD7   0900        F     637     	JP TESTGUZIK
+                         638     DODIZM
+0AD9   0900        F     639     	JP ZMIANA
+                         640     	.ENDC
+                         641     	
+                         642     MMNIEJ
+                         643     		; Spadek poziomu
+                         644     	.IFC EQ TYPDIOD
+                                 	INC MNIEJ
+                                 KROK
+                                 	DEC CZAS
+                                 	JRZ ZMIANA
+                                 	JP TESTGUZIK
+                                 ZMIANA
+                                 	LDI CZAS, OKRES
+                                 	LD A, WIEKSZ
+                                 	CPI A, BEZWLAD
+                                 	JRNC RWIEKSZ	; ruch w strone wiekszych
+                                 	LD A, MNIEJ
+                                 	CPI A, BEZWLAD
+                                 	JRC NIEMNIEJ
+                                 	JP RMNIEJ	; ruch w strone mniejszych
+                                 NIEMNIEJ
+                                 	JP POZMIANIE
+                                 RWIEKSZ
+                                 	INC POZIOM
+                                 	JP JUZSWIEC
+                                 RMNIEJ
+                                 	DEC POZIOM
+                                    .ENDC
+                         667        
+                         668     	.IFC EQ TYPDIOD-1
+0ADB   1F8B              669     	LD A, DIKIER
+0ADD   3702              670     	CPI A, 2
+0ADF   04          F     671     	JRZ ZGODMNIEJ
+0AE0   0D8C5A            672     	LDI DIPOMZM, CZASPOMB
+0AE3   FF8D              673     	DEC DIOPOZ
+0AE5   04          F     674     	JRZ SPADEK
+0AE6   0900        F     675     	JP TESTGUZIK
+                         676     ZGODMNIEJ
+0AE8   0D8D64            677     	LDI DIOPOZ, OPZNDIOD
+0AEB   FF8C              678     	DEC DIPOMZM
+0AED   04          F     679     	JRZ SPADEK
+0AEE   0900        F     680     	JP TESTGUZIK
+                         681     SPADEK
+0AF0   0D8C5A            682     	LDI DIPOMZM, CZASPOMB
+0AF3   0D8D64            683     	LDI DIOPOZ, OPZNDIOD
+0AF6   0D8E5A            684     	LDI DIPOMPZ, CZASPOMB
+0AF9   0D8B02            685     	LDI DIKIER, 2
+0AFC   FF90              686     	DEC POZIOM
+                         687        .ENDC
+                         688        
+                         689     	.IFC EQ TYPDIOD-2
+0AFE   0D8E5A            690     	LDI DIWIEKSZ, CZASPOMB
+0B01   FF8F              691     	DEC DIMNIEJ
+0B03   04          F     692     	JRZ SPADEK
+0B04   0900        F     693     	JP TESTGUZIK
+
+*** ERROR #11 IN LINE 694 OF zuc05.asm : ATTEMPT TO REDEFINE SYMBOL 'SPADEK'
+0B04   0900        F     694     SPADEK
+0B06   0D8F5A            695     	LDI DIMNIEJ, CZASPOMB
+0B09   7F8C              696     	INC MNIEJ
+0B0B   FF8D              697     	DEC CZAS
+0B0D   04          F     698     	JRZ ZMIANA
+0B0E   0900        F     699     	JP TESTGUZIK
+                         700     ZMIANA
+0B10   0D8D04            701     	LDI CZAS, KWORUM
+0B13   1F8B              702     	LD A, WIEKSZ
+0B15   3703              703     	CPI A, BEZWLAD
+0B17   02          F     704     	JRNC RWIEKSZ	; ruch w strone wiekszych
+0B18   1F8C              705     	LD A, MNIEJ
+0B1A   3703              706     	CPI A, BEZWLAD
+0B1C   06          F     707     	JRC NIEMNIEJ
+0B1D   0900        F     708     	JP RMNIEJ	; ruch w strone mniejszych
+                         709     NIEMNIEJ
+0B1F   0900        F     710     	JP POZMIANIE
+                         711     RWIEKSZ
+0B21   7F90              712     	INC POZIOM
+0B23   0900        F     713     	JP JUZSWIEC
+                         714     RMNIEJ
+0B25   FF90              715     	DEC POZIOM	
+                         716     	.ENDC
+                         717     
+                         718     JUZSWIEC
+                         719     	;; czyszczenie diod
+0B27   1FC1              720      	LD A, DRB
+0B29   B703              721      	ANDI A, 00000011b
+0B2B   9FC1              722      	LD DRB, A
+0B2D   0BC0              723      	RES 0, DRA
+0B2F   8BC0              724      	RES 1, DRA
+0B31   4BC0              725      	RES 2, DRA
+                         726      	;; swiecenie
+0B33   1F90              727      	LD A, POZIOM
+0B35   FFFF              728      	DEC A
+0B37   00          F     729      	JRNZ POZI2
+0B38   5BC1              730      	SET 2, DRB		; 1 prog
+0B3A   0900        F     731      	JP POZMIANIE
+                         732     POZI2
+0B3C   FFFF              733      	DEC A
+0B3E   00          F     734      	JRNZ POZI3
+0B3F   DBC1              735      	SET 3, DRB
+0B41   0900        F     736      	JP POZMIANIE
+                         737     POZI3
+0B43   FFFF              738      	DEC A
+0B45   00          F     739      	JRNZ POZI4
+0B46   7BC1              740      	SET 6, DRB
+0B48   0900        F     741      	JP POZMIANIE
+                         742     POZI4
+0B4A   FFFF              743      	DEC A
+0B4C   00          F     744      	JRNZ POZI5
+0B4D   FBC1              745      	SET 7, DRB
+0B4F   0900        F     746      	JP POZMIANIE
+                         747     POZI5
+0B51   FFFF              748      	DEC A
+0B53   00          F     749      	JRNZ POZI6
+0B54   1BC0              750      	SET 0, DRA
+0B56   0900        F     751      	JP POZMIANIE
+                         752     POZI6
+0B58   FFFF              753      	DEC A
+0B5A   00          F     754      	JRNZ POZI7
+0B5B   9BC0              755      	SET 1, DRA
+0B5D   0900        F     756      	JP POZMIANIE
+                         757     POZI7
+0B5F   FFFF              758      	DEC A
+0B61   00          F     759      	JRNZ POZMIANIE
+0B62   5BC0              760      	SET 2, DRA
+                         761     POZMIANIE
+                         762     	.IFC EQ TYPDIOD
+                                 	LDI WIEKSZ, 0
+                                 	LDI MNIEJ, 0
+                                 	.ENDC
+                         766     	
+                         767     	
+                         768     	.IFC EQ TYPDIOD-2
+0B64   0D8B00            769     	LDI WIEKSZ, 0
+0B67   0D8C00            770     	LDI MNIEJ, 0
+                         771     	.ENDC
+                         772     	
+                         773     TESTGUZIK
+                         774     	;;jesli trwa wyjscie proby, omin sprawdzanie
+                         775     	.IFC NE PROBA
+0B6A   1F98              776     	LD A, PROBST
+0B6C   04          F     777     	JRZ POMGUZIK
+0B6D   0900        F     778     	JP KROKPROBA
+                         779     POMGUZIK
+                         780     	.ENDC
+                         781     	.IFC EQ DEBUG
+                                 	LD A, DRC
+                                 	ANDI A, 00000100b	; testowanie PC2
+                                 	.ELSE
+0B6F   1FA0              785     	LD A, DBGUZIK		; DEBUG
+                         786     	.ENDC
+0B71   00          F     787     	JRNZ GUZIK1
+0B72   0900        F     788     	JP GUZIK0
+                         789     GUZIK1
+0B74   1F84              790     	LD A, GUST
+0B76   04          F     791     	JRZ STARTGUZ
+0B77   FF85              792     	DEC GUML
+0B79   04          F     793     	JRZ KROKGUZ
+0B7A   0900        F     794     	JP POTESCIE
+                         795     STARTGUZ
+0B7C   0D8401            796     	LDI GUST, 1
+0B7F   0D85FF            797     	LDI GUML, 255
+0B82   0900        F     798     	JP POTESCIE
+                         799     KROKGUZ
+0B84   0D85FF            800     	LDI GUML, 255
+0B87   7F84              801     	INC GUST
+                         802     	.IFC NE PROBA
+0B89   1F84              803     	LD A, GUST
+0B8B   3714              804     	CPI A, WYJPROBY
+0B8D   02          F     805     	JRNC WYSLPROBE
+                         806     	.ENDC
+0B8E   0900        F     807     	JP POTESCIE
+                         808     	.IFC NE PROBA
+                         809     WYSLPROBE
+0B90   0D980A            810     	LDI PROBST, DLPROBY
+0B93   0D99FF            811     	LDI PROBML, 255
+0B96   0D9A02            812     	LDI MIGMST, SYGPROBY
+0B99   0D8400            813     	LDI GUST, 0
+0B9C   0D8500            814     	LDI GUML, 0
+                         815     	;; przelacz w wyjscie push-pull stan wysoki
+0B9F   0DC218            816     	LDI DRC,    00011000b
+0BA2   0DC604            817     	LDI DDRC,   00000100b		;
+0BA5   0DCE04            818     	LDI ORC,    ORCWYJPR		; = 100b (PC2)
+0BA8   0D9704            819     	LDI STANORC, ORCWYJPR
+0BAB   0DC21C            820     	LDI DRC,    00011100b
+0BAE   0900        F     821     	JP POTESCIE
+                         822     	.ENDC
+                         823     GUZIK0
+0BB0   1F84              824     	LD A, GUST
+0BB2   3703              825     	CPI A, KTRLKAS
+0BB4   02          F     826     	JRNC KASUJ
+0BB5   0D8400            827     	LDI GUST, 0
+0BB8   0D8500            828     	LDI GUML, 0
+0BBB   0900        F     829     	JP POTESCIE
+                         830     KASUJ
+                         831     	;; kasuje ledM i pozwala na skasowanie zatrzasku po opoznieniu pomiaru
+0BBD   0D8400            832     	LDI GUST, 0
+0BC0   0D8500            833     	LDI GUML, 0
+0BC3   CBC0              834     	RES 3, DRA
+0BC5   0D9100            835     	CLR MSTAN
+                         836     	.IFC NE LEDM	; dioda M = (mozliwa) pamiec
+0BC8   138800      F     837     	JRS 0, BTRZ, NIEKASPAM
+0BCB   0D8200            838     	LDI V, 0
+0BCE   0100        F     839     	CALL PISZPAMV
+                         840     NIEKASPAM
+                         841     	.ENDC
+0BD0   138A00      F     842     	JRS 0, ZATRZ, KASZATRZ
+0BD3   0900        F     843     	JP POTESCIE
+                         844     KASZATRZ
+0BD5   0D8603            845     	LDI PBST, TRZYMAJB	; opoznienie B -- jesli bedzie OK skasuje zatrzask
+0BD8   0D87FF            846     	LDI PBML, 255			; opoznienie B - mniej znaczacy rejestr
+0BDB   0900        F     847     	JP POTESCIE
+                         848     
+                         849     KROKPROBA
+0BDD   FF99              850     	DEC PROBML
+0BDF   04          F     851     	JRZ ROBKROK
+0BE0   0900        F     852     	JP POTESCIE
+                         853     ROBKROK
+0BE2   0D99FF            854     	LDI PROBML, 255
+0BE5   FF9A              855     	DEC MIGMST
+0BE7   00          F     856     	JRNZ ROB2KROK
+0BE8   0D9A02            857     	LDI MIGMST, SYGPROBY
+0BEB   C3C000      F     858     	JRR 3, DRA, PRSWIECM
+0BEE   CBC0              859     	RES 3, DRA
+0BF0   0900        F     860     	JP ROB2KROK
+                         861     PRSWIECM
+0BF2   DBC0              862     	SET 3, DRA
+                         863     ROB2KROK
+0BF4   FF98              864     	DEC PROBST
+0BF6   04          F     865     	JRZ KONPROBY
+0BF7   0900        F     866     	JP POTESCIE
+                         867     KONPROBY
+0BF9   0D9A00            868     	LDI MIGMST, 0
+0BFC   0DC218            869     	LDI DRC,    00011000b		; PC2 wej kas bez pull-up, PC3 pom B, PC4 zasilanie
+0BFF   0DCE00            870     	LDI ORC, ORCKAS				; = 0
+0C02   0D9700            871     	LDI STANORC, ORCKAS
+0C05   0DC600            872     	LDI DDRC,   00000000b		;
+0C08   0DC21C            873     	LDI DRC,    00011100b		; PC2 wej kas bez pull-up, PC3 pom B, PC4 zasilanie
+0C0B   0100        F     874     	CALL PRZYWRM
+                         875     	
+                         876     POTESCIE
+                         877     	; JRR 0, ZATRZ, OPOZNIENIE
+                         878     	; LD A, BTRZ
+                         879     	; JRNZ OPOZNIENIE		; opoznienie chwycenia w opcji zatrzasku
+                         880     	; JP DOZMZATRZ
+                         881     	
+                         882     OPOZNIENIE
+0C0D   1F86              883     	LD A, PBST
+0C0F   00          F     884     	JRNZ OPOZNIAJ
+0C10   0900        F     885     	JP DOZMZATRZ
+                         886     OPOZNIAJ
+0C12   FF87              887     	DEC PBML
+0C14   04          F     888     	JRZ OPOZN2
+0C15   0900        F     889     	JP DOZMZATRZ
+                         890     OPOZN2
+0C17   0D87FF            891     	LDI PBML, 255
+0C1A   FF86              892     	DEC PBST
+0C1C   04          F     893     	JRZ OPOZN3
+0C1D   0900        F     894     	JP DOZMZATRZ
+                         895     OPOZN3
+0C1F   0D8800            896     	LDI BTRZ, 0
+0C22   8BC1              897     	RES 1, DRB		; zgas ledB
+0C24   1BC1              898     	SET 0, DRB		; swiec ledP
+                         899     	;; nie kasuj pamieci, jesli nie bylo kasowania
+0C26   038A00      F     900     	JRR 0, ZATRZ, DOZMZATRZ
+0C29   0D8200            901     	LDI V, 0			; zeruj pamiec
+0C2C   0100        F     902     	CALL PISZPAMV
+                         903     
+                         904     DOZMZATRZ
+0C2E   1F93              905     	LD A, JESTZAT
+0C30   00          F     906     	JRNZ DO2ZMZATRZ
+0C31   1F94              907     	LD A, NIEZAT
+0C33   00          F     908     	JRNZ DO2ZMZATRZ
+0C34   FF96              909     	DEC ZATML
+0C36   04          F     910     	JRZ ZATML0
+0C37   0900        F     911     	JP PETLA
+                         912     DO2ZMZATRZ
+0C39   0900        F     913     	JP ZMZATRZ
+                         914     ZATML0
+0C3B   0D96FF            915     	LDI ZATML, 255
+0C3E   FF95              916     	DEC ZATST
+0C40   04          F     917     	JRZ ZMZATRZ
+0C41   0900        F     918     	JP PETLA
+                         919     ZMZATRZ
+0C43   0D950A            920     	LDI ZATST, KTRLZAT
+                         921     	;LD A, DRA
+                         922     	;LD W, A
+                         923     
+0C46   1F97              924     	LD A, STANORC
+0C48   9FCE              925     	LD ORC, A		; zeby nie doprowadzic do zwarcia na pomiarze A/D!!!
+0C4A   CBCC              926     	RES 3, ORA
+0C4C   CBC4              927     	RES 3, DDRA
+0C4E   DBC0              928     	SET 3, DRA
+0C50   DBCC              929     	SET 3, ORA		; ustaw PA3 do przetwarzania A/D
+0C52   04                930     	NOP
+0C53   04                931     	NOP
+0C54   04                932     	NOP
+0C55   04                933     	NOP
+0C56   0DD1B0            934     	LDI ADCR, 10110000b
+                         935     	.IFC EQ DEBUG
+                                 	WAIT		; Czekaj na wynik pomiaru - wczytany do akumulatora
+                                 	.ELSE
+0C59   1F9F              938     	LD A, DBZATRZ		; DEBUG
+                         939     	.ENDC
+0C5B   CBCC              940     	RES 3, ORA		; PA3 ledM (nie uzywaj akumulatora)
+0C5D   DBC4              941     	SET 3, DDRA
+0C5F   DBCC              942     	SET 3, ORA
+0C61   3732              943     	CPI A, POMZATRZ		; sprawdz czy napiecie na wlasciwym poziomie
+0C63   02          F     944     	JRNC PONI1NIE
+0C64   0100        F     945     	CALL PRZYWRM
+                         946     	;LD A, W
+                         947     	;LD DRA, A
+0C66   0900        F     948     	JP PONI1ZAT
+                         949     PONI1NIE
+0C68   0100        F     950     	CALL PRZYWRM
+                         951     	;LD A, W
+                         952     	;LD DRA, A
+0C6A   7F94              953     	INC NIEZAT
+0C6C   0D9300            954     	LDI JESTZAT, 0
+0C6F   1F8A              955     	LD A, ZATRZ
+0C71   04          F     956     	JRZ ZATRZ1NIE
+0C72   0900        F     957     	JP ZATRZ1SPR
+                         958     ZATRZ1NIE
+0C74   0D9400            959     	LDI NIEZAT, 0
+0C77   0900        F     960     	JP PETLA
+                         961     PONI1ZAT
+0C79   7F93              962     	INC JESTZAT
+0C7B   0D9400            963     	LDI NIEZAT, 0
+0C7E   1F8A              964     	LD A, ZATRZ
+0C80   04          F     965     	JRZ ZATRZ1SPR
+0C81   0D9300            966     	LDI JESTZAT, 0
+0C84   0900        F     967     	JP PETLA
+                         968     ZATRZ1SPR
+0C86   1F93              969     	LD A, JESTZAT
+0C88   3764              970     	CPI A, CZASZATRZ
+0C8A   02          F     971     	JRNC ZAT1JEST
+0C8B   1F94              972     	LD A, NIEZAT
+0C8D   3764              973     	CPI A, CZASZATRZ
+0C8F   06          F     974     	JRC DOPETLI
+0C90   0900        F     975     	JP ZAT1NIE
+                         976     DOPETLI
+0C92   0900        F     977     	JP PETLA
+                         978     ZAT1JEST
+0C94   0D8AFF            979     	LDI ZATRZ, 255
+0C97   0D9300            980     	LDI JESTZAT, 0
+                         981     	.IFC NE LEDM		; wersja z ledM
+0C9A   138800      F     982     	JRS 0, BTRZ, ZATCHWYC
+0C9D   CBC0              983     	RES 3, DRA
+0C9F   0D9100            984     	CLR MSTAN
+0CA2   0100        F     985     	CALL CZYTPAMA
+0CA4   04          F     986     	JRZ DO3PETLI
+0CA5   0D8200            987     	LDI V, 0
+0CA8   0100        F     988     	CALL PISZPAMV
+                         989     	.ENDC
+0CAA   0900        F     990     	JP PETLA
+                         991     ZATCHWYC
+0CAC   0D8600            992     	LDI PBST, 0
+0CAF   0D8700            993     	LDI PBML, 0
+                         994     DO3PETLI
+0CB2   0900        F     995     	JP PETLA
+                         996     ZAT1NIE
+0CB4   0D8A00            997     	LDI ZATRZ, 0
+0CB7   0D9400            998     	LDI NIEZAT, 0
+                         999     	.IFC EQ LEDM		; wersja bez ledM -- czysc pamiec
+                                 	CALL CZYTPAMA
+                                 	JRZ NIECZYSC
+                                 	LDI V, 0
+                                 	CALL PISZPAMV
+                                 NIECZYSC
+                                 	.ENDC
+0CBA   038800      F    1006     	JRR 0, BTRZ, DO4PETLI	
+0CBD   0D8603           1007     	LDI PBST, TRZYMAJB
+0CC0   0D87FF           1008     	LDI PBML, 255
+                        1009     	.IFC EQ LEDM		; wersja bez ledM
+                                 	RES 3, DRA		; kasuj ledM
+                                 	CLR MSTAN
+                                 	.ELSE
+0CC3   DBC0             1013     	SET 3, DRA		; ustaw ledM w opcji bez zatrzasku (?)
+0CC5   0D91FF           1014     	LDI MSTAN, 255
+                        1015     	.ENDC
+                        1016     DO4PETLI	
+0CC8   0900        F    1017     	JP PETLA	; zapetl od nowa
+                        1018     
+                        1019     PISZPAMV
+0CCA   0DD8FE           1020     	LDI WDR, 11111110b		; watchdog
+                        1021     CZEKAJ5PAM			; czysc pamiec zatrzasku
+0CCD   1702             1022     	LDI A, 10b		; sprawdz 2 bit EECTL -- E2BUSY
+0CCF   BFEA             1023     	AND A, EECTL
+0CD1   00          F    1024     	JRNZ CZEKAJ5PAM
+0CD2   0DEA01           1025     	LDI EECTL, 00000001b	; pozwol na pisanie do pamieci (bit 0 -- E2ENA)
+0CD5   B5               1026     	LD A, V
+0CD6   9F00             1027     	LD PAMIEC, A		; zmien zatrzask w pamieci
+                        1028     CZEKAJ6PAM
+0CD8   1702             1029     	LDI A, 10b		; sprawdz 2 bit EECTL -- E2BUSY
+0CDA   BFEA             1030     	AND A, EECTL
+0CDC   00          F    1031     	JRNZ CZEKAJ6PAM
+0CDD   0DEA00           1032     	LDI EECTL, 0		; wylacz pisanie do pamieci
+0CE0   CD               1033     	RET
+                        1034     PRZYWRM
+0CE1   139100      F    1035     	JRS 0, MSTAN, MSWIECI
+0CE4   CBC0             1036     	RES 3, DRA
+0CE6   CD               1037     	RET
+                        1038     MSWIECI
+0CE7   DBC0             1039     	SET 3, DRA
+0CE9   CD               1040     	RET
+                        1041     
+                        1042     CZYTPAMA
+0CEA   0DD8FE           1043     	LDI WDR, 11111110b		; watchdog
+                        1044     CZEKAJ7PAM
+0CED   1702             1045     	LDI A, 10b		; sprawdz 2 bit EECTL -- E2BUSY
+0CEF   BFEA             1046     	AND A, EECTL
+0CF1   00          F    1047     	JRNZ CZEKAJ7PAM
+0CF2   1F00             1048     	LD A, PAMIEC
+0CF4   CD               1049     	RET
+                        1050     
+                        1051     ADCINT
+0CF5   0DD110           1052     	LDI ADCR, 00010000b	; zeby nie zapetlal przerwania 
+0CF8   1FD0             1053     	LD A, ADR	; wczytywanie pomiaru
+0CFA   4D               1054     	RETI
+                        1055     TIMINT
+0CFB   4D               1056     	RETI
+                        1057     PAINT
+0CFC   4D               1058     	RETI
+                        1059     PBINT
+0CFD   4D               1060     	RETI
+                        1061     NMINT
+0CFE   4D               1062     	RETI
+                        1063     		
+------ ------------     1064     .ORG 0FF0H
+0FF0   0900        F    1065     	JP ADCINT	; budzenie po pomiarze
+0FF2   0900        F    1066     	JP TIMINT	; timer
+0FF4   0900        F    1067     	JP PAINT		; przerwanie na porcie A
+0FF6   0900        F    1068     	JP PBINT		; przerwanie na porcie B
+------ ------------     1069     .ORG 0FFCH
+0FFC   0900        F    1070     	JP NMINT		; przerwanie NMI
+0FFE   0900        F    1071        JP INIT     ; obsluga RESET
+                        1072     .END
+MACRO ASSEMBLER ZUC05                              01/28/106 12:43:27 PAGE     2
+
+
+SYMBOL TABLE LISTING
+------ ----- -------
+
+
+N A M E             T Y P E  V A L U E   ATTRIBUTES             REFERENCES
+
+OPOZNIENIE . . . .  C   ADDR 000C0DH   R SEG=?CO?ZUC0501        882# 
+ZMIANA . . . . . .  C   ADDR 000B10H   R SEG=?CO?ZUC0501        639 698 700# 
+MMNIEJ . . . . . .  C   ADDR 000ADBH   R SEG=?CO?ZUC0501        574 642# 
+OPOZST1. . . . . .  C   ADDR 00091DH   R SEG=?CO?ZUC0501        300# 308 
+ORCWYJPR . . . . .  N   NUMB 00000004H                          163# 818 819 
+DIMNIEJ. . . . . .  D   ADDR 00008FH   A                        153# 281 594 628 
+                                                                691 695 
+DIPOMZM. . . . . .  D   ADDR 00008CH   A                        144# 272 582 609 
+                                                                615 619 672 678 682 
+                                                                
+ZASILANIE. . . . .  N   NUMB 00000076H                          71# 402 
+ZATRZ1SPR. . . . .  C   ADDR 000C86H   R SEG=?CO?ZUC0501        957 965 968# 
+PRZYWROT . . . . .  C   ADDR 0009C6H   R SEG=?CO?ZUC0501        433 435# 
+OPOZST2. . . . . .  C   ADDR 000925H   R SEG=?CO?ZUC0501        305# 307 
+DBZATRZ. . . . . .  D   ADDR 00009FH   A                        173# 293 323 938 
+                                                                
+A. . . . . . . . .  D   ADDR 0000FFH   A                        125# 326 336 339 
+                                                                402 427 483 488 493 
+                                                                498 504 522 554 559 
+                                                                703 706 728 733 738 
+                                                                743 748 753 758 804 
+                                                                825 943 970 973 
+ZMZATRZ. . . . . .  C   ADDR 000C43H   R SEG=?CO?ZUC0501        913 917 919# 
+BTRZ . . . . . . .  D   ADDR 000088H   A                        134# 262 377 446 
+                                                                451 503 533 837 896 
+                                                                982 1006 
+LEDM . . . . . . .  N   NUMB 00000001H                          59# 203 347 362 374 
+                                                                437 542 836 981 999 
+                                                                1009 
+ORA. . . . . . . .  D   ADDR 0000CCH   A                        182# 238 314 357 
+                                                                359 926 929 940 942 
+                                                                
+PONI1NIE . . . . .  C   ADDR 000C68H   R SEG=?CO?ZUC0501        944 949# 
+ZASWIECM . . . . .  C   ADDR 000973H   R SEG=?CO?ZUC0501        369 371# 
+ZATRZKON . . . . .  C   ADDR 00095DH   R SEG=?CO?ZUC0501        344 354# 
+ORCKAS . . . . . .  N   NUMB 00000000H                          164# 245 870 871 
+                                                                
+MSTAN. . . . . . .  D   ADDR 000091H   A                        156# 263 361 373 
+                                                                546 835 984 1014 
+                                                                1035 
+DIPOMPZ. . . . . .  D   ADDR 00008EH   A                        146# 274 583 587 
+                                                                621 684 
+GUST . . . . . . .  D   ADDR 000084H   A                        130# 251 790 796 
+                                                                801 803 813 824 827 
+                                                                832 
+ORB. . . . . . . .  D   ADDR 0000CDH   A                        185# 241 
+DO3PETLI . . . . .  C   ADDR 000CB2H   R SEG=?CO?ZUC0501        986 994# 
+STARTGUZ . . . . .  C   ADDR 000B7CH   R SEG=?CO?ZUC0501        791 795# 
+ZGODWIEK . . . . .  C   ADDR 000AAFH   R SEG=?CO?ZUC0501        608 613# 
+ORC. . . . . . . .  D   ADDR 0000CEH   A                        188# 244 391 416 
+                                                                468 818 870 925 
+DO4PETLI . . . . .  C   ADDR 000CC8H   R SEG=?CO?ZUC0501        1006 1016# 
+RMNIEJ . . . . . .  C   ADDR 000B25H   R SEG=?CO?ZUC0501        708 714# 
+ZATJEST. . . . . .  C   ADDR 000955H   R SEG=?CO?ZUC0501        337 342# 
+PONIZAT. . . . . .  C   ADDR 000944H   R SEG=?CO?ZUC0501        327 331# 
+JESTZAT. . . . . .  D   ADDR 000093H   A                        158# 283 329 332 
+                                                                335 355 905 954 962 
+                                                                966 969 980 
+KWORUM . . . . . .  N   NUMB 00000004H                          86# 87 279 701 
+NMINT. . . . . . .  C   ADDR 000CFEH   R SEG=?CO?ZUC0501        1061# 1070 
+RODBPOMB1. . . . .  C   ADDR 0009F1H   R SEG=?CO?ZUC0501        462# 
+DAJW . . . . . . .  C   ADDR 000929H   R SEG=?CO?ZUC0501        303 309# 
+WYJPROBY . . . . .  N   NUMB 00000014H                          66# 804 
+_DEBUG . . . . . .  N   NUMB 00000001H                          60# 170 197 290 320 
+                                                                397 422 474 781 935 
+                                                                
+DO2ZMZATRZ . . . .  C   ADDR 000C39H   R SEG=?CO?ZUC0501        906 908 912# 
+WYSLPROBE. . . . .  C   ADDR 000B90H   R SEG=?CO?ZUC0501        805 809# 
+ZGODMNIEJ. . . . .  C   ADDR 000AE8H   R SEG=?CO?ZUC0501        671 676# 
+DODIZM . . . . . .  C   ADDR 000AD9H   R SEG=?CO?ZUC0501        636 638# 
+PRACA. . . . . . .  C   ADDR 0009EEH   R SEG=?CO?ZUC0501        404 457# 
+OPZNDIOD . . . . .  N   NUMB 00000064H                          83# 273 588 614 620 
+                                                                677 683 
+POMZATRZ . . . . .  N   NUMB 00000032H                          74# 326 943 
+ZATRZ1NIE. . . . .  C   ADDR 000C74H   R SEG=?CO?ZUC0501        956 958# 
+OPOZN2 . . . . . .  C   ADDR 000C17H   R SEG=?CO?ZUC0501        888 890# 
+ZASOK. . . . . . .  C   ADDR 0009C1H   R SEG=?CO?ZUC0501        428 431# 
+ZATML. . . . . . .  D   ADDR 000096H   A                        161# 250 909 915 
+                                                                
+OPOZN3 . . . . . .  C   ADDR 000C1FH   R SEG=?CO?ZUC0501        893 895# 
+CZYTPAMA . . . . .  C   ADDR 000CEAH   R SEG=?CO?ZUC0501        368 985 1042# 
+DBZASIL. . . . . .  D   ADDR 00009DH   A                        171# 292 400 425 
+                                                                
+PROG1. . . . . . .  N   NUMB 00000005H                          90# 483 
+BEZWLAD. . . . . .  N   NUMB 00000003H                          87# 703 706 
+OPOZNIAJ . . . . .  C   ADDR 000C12H   R SEG=?CO?ZUC0501        884 886# 
+PRSWIECM . . . . .  C   ADDR 000BF2H   R SEG=?CO?ZUC0501        858 861# 
+TESTGUZIK. . . . .  C   ADDR 000B6AH   R SEG=?CO?ZUC0501        585 589 595 612 617 
+                                                                631 637 675 680 693 
+                                                                699 773# 
+MWIEKSZ. . . . . .  C   ADDR 000AA2H   R SEG=?CO?ZUC0501        571 598# 
+DIWIEKSZ . . . . .  D   ADDR 00008EH   A                        152# 280 593 629 
+                                                                633 690 
+PROG2. . . . . . .  N   NUMB 00000008H                          91# 488 
+DRBR . . . . . . .  D   ADDR 0000E8H   A                        1# 193# 247 
+IOR. . . . . . . .  D   ADDR 0000C8H   A                        192# 254 
+CZEKAJ5PAM . . . .  C   ADDR 000CCDH   R SEG=?CO?ZUC0501        1021# 1024 
+KROKPROBA. . . . .  C   ADDR 000BDDH   R SEG=?CO?ZUC0501        778 849# 
+DIREOPZN . . . . .  C   ADDR 000A92H   R SEG=?CO?ZUC0501        584 586# 
+DOPAMIECI. . . . .  C   ADDR 000A68H   R SEG=?CO?ZUC0501        538 547# 
+PRZYWRM. . . . . .  C   ADDR 000CE1H   R SEG=?CO?ZUC0501        439 874 945 950 1034# 
+                                                                
+ZATNIE . . . . . .  C   ADDR 00095AH   R SEG=?CO?ZUC0501        340 345# 
+NIEZAT . . . . . .  D   ADDR 000094H   A                        159# 284 328 333 
+                                                                338 356 443 907 953 
+                                                                959 963 972 998 
+PBML . . . . . . .  D   ADDR 000087H   A                        133# 261 380 445 
+                                                                450 515 519 535 541 
+                                                                846 887 891 993 1008 
+                                                                
+PROG3. . . . . . .  N   NUMB 00000017H                          92# 493 
+CZEKAJ6PAM . . . .  C   ADDR 000CD8H   R SEG=?CO?ZUC0501        1028# 1031 
+ROB2KROK . . . . .  C   ADDR 000BF4H   R SEG=?CO?ZUC0501        856 860 863# 
+POZMIANIE. . . . .  C   ADDR 000B64H   R SEG=?CO?ZUC0501        710 731 736 741 746 
+                                                                751 756 759 761# 
+                                                                
+ZATRZYMAJ. . . . .  C   ADDR 000A2BH   R SEG=?CO?ZUC0501        510 512# 
+PROBML . . . . . .  D   ADDR 000099H   A                        167# 287 811 850 
+                                                                854 
+PROG4. . . . . . .  N   NUMB 00000038H                          93# 498 
+CZASZATRZ. . . . .  N   NUMB 00000064H                          75# 336 339 970 973 
+                                                                
+KTRLZAT. . . . . .  N   NUMB 0000000AH                          70# 249 920 
+CZEKAJ7PAM . . . .  C   ADDR 000CEDH   R SEG=?CO?ZUC0501        1044# 1047 
+ZATCHWYC . . . . .  C   ADDR 000CACH   R SEG=?CO?ZUC0501        982 991# 
+KROKGUZ. . . . . .  C   ADDR 000B84H   R SEG=?CO?ZUC0501        793 799# 
+POWER. . . . . . .  C   ADDR 00099FH   R SEG=?CO?ZUC0501        403 405# 430 434 
+                                                                
+EECTL. . . . . . .  D   ADDR 0000EAH   A                        194# 248 1023 1025 
+                                                                1030 1032 1046 
+PROG5. . . . . . .  N   NUMB 00000052H                          95# 522 
+WDR. . . . . . . .  D   ADDR 0000D8H   A                        191# 233 301 313 
+                                                                383 406 459 1020 
+                                                                1043 
+MMNIEJN. . . . . .  C   ADDR 000A8AH   R SEG=?CO?ZUC0501        573 575# 
+POMB . . . . . . .  D   ADDR 000089H   A                        135# 259 442 509 
+                                                                513 528 532 566 
+PROG6. . . . . . .  N   NUMB 00000079H                          96# 554 
+NIEMNIEJ . . . . .  C   ADDR 000B1FH   R SEG=?CO?ZUC0501        707 709# 
+RWIEKSZ. . . . . .  C   ADDR 000B21H   R SEG=?CO?ZUC0501        704 711# 
+HISTEREZA. . . . .  C   ADDR 000A25H   R SEG=?CO?ZUC0501        505 507# 
+PAMIEC . . . . . .  D   ADDR 000000H   A                        177# 1027 1048 
+PROG7. . . . . . .  N   NUMB 00000093H                          97# 559 
+OPOZST . . . . . .  N   NUMB 00000064H                          63# 257 
+PRZYWR2. . . . . .  C   ADDR 0009CEH   R SEG=?CO?ZUC0501        438 440# 
+ZATRZSPR . . . . .  C   ADDR 000949H   R SEG=?CO?ZUC0501        330 334# 
+DBGUZIK. . . . . .  D   ADDR 0000A0H   A                        174# 294 785 
+MSWIECI. . . . . .  C   ADDR 000CE7H   R SEG=?CO?ZUC0501        1035 1038# 
+DOPETLI. . . . . .  C   ADDR 000C92H   R SEG=?CO?ZUC0501        974 976# 
+MIGMST . . . . . .  D   ADDR 00009AH   A                        168# 288 812 855 
+                                                                857 868 
+CZAS . . . . . . .  D   ADDR 00008DH   A                        151# 279 635 697 
+                                                                701 
+ADCINT . . . . . .  C   ADDR 000CF5H   R SEG=?CO?ZUC0501        1051# 1065 
+FINISZ . . . . . .  C   ADDR 000A80H   R SEG=?CO?ZUC0501        530 556 561 564 567# 
+                                                                
+MNIEJ. . . . . . .  D   ADDR 00008CH   A                        150# 278 696 705 
+                                                                770 
+TRZYMAJB . . . . .  N   NUMB 00000003H                          76# 260 449 518 540 
+                                                                845 1007 
+KONPROBY . . . . .  C   ADDR 000BF9H   R SEG=?CO?ZUC0501        865 867# 
+POZI2. . . . . . .  C   ADDR 000B3CH   R SEG=?CO?ZUC0501        729 732# 
+JUZSWIEC . . . . .  C   ADDR 000B27H   R SEG=?CO?ZUC0501        453 456 624 713 718# 
+                                                                
+INIT . . . . . . .  C   ADDR 000890H   R SEG=?CO?ZUC0501        232# 1071 
+DBPOMB . . . . . .  D   ADDR 00009EH   A                        172# 295 477 
+PROBA. . . . . . .  N   NUMB 00000001H                          61# 65 165 210 285 
+                                                                775 802 808 
+TIMINT . . . . . .  C   ADDR 000CFBH   R SEG=?CO?ZUC0501        1055# 1066 
+DOZMZATRZ. . . . .  C   ADDR 000C2EH   R SEG=?CO?ZUC0501        885 889 894 900 904# 
+                                                                
+POZI3. . . . . . .  C   ADDR 000B43H   R SEG=?CO?ZUC0501        734 737# 
+AWARYJNY . . . . .  C   ADDR 000A44H   R SEG=?CO?ZUC0501        523 525# 
+DIOPOZ . . . . . .  D   ADDR 00008DH   A                        145# 273 588 610 
+                                                                614 620 673 677 683 
+                                                                
+GUML . . . . . . .  D   ADDR 000085H   A                        131# 252 792 797 
+                                                                800 814 828 833 
+ZASICHWYC. . . . .  N   NUMB 000000A8H                          72# 427 
+ZAT1JEST . . . . .  C   ADDR 000C94H   R SEG=?CO?ZUC0501        971 978# 
+PONI1ZAT . . . . .  C   ADDR 000C79H   R SEG=?CO?ZUC0501        948 961# 
+POMGUZIK . . . . .  C   ADDR 000B6FH   R SEG=?CO?ZUC0501        777 779# 
+POZI4. . . . . . .  C   ADDR 000B4AH   R SEG=?CO?ZUC0501        739 742# 
+USTAWB . . . . . .  C   ADDR 0009EAH   R SEG=?CO?ZUC0501        448 452 454# 
+PETLA. . . . . . .  C   ADDR 000986H   R SEG=?CO?ZUC0501        370 375 382# 911 
+                                                                918 960 967 977 990 
+                                                                995 1017 
+ZATST. . . . . . .  D   ADDR 000095H   A                        160# 249 916 920 
+                                                                
+ZASOPOZ. . . . . .  D   ADDR 000092H   A                        157# 429 432 436 
+                                                                
+V. . . . . . . . .  D   ADDR 000082H   A                        128# 256 304 548 
+                                                                838 901 987 
+POZI5. . . . . . .  C   ADDR 000B51H   R SEG=?CO?ZUC0501        744 747# 
+ADR. . . . . . . .  D   ADDR 0000D0H   A                        190# 1053 
+DRA. . . . . . . .  D   ADDR 0000C0H   A                        180# 239 360 372 
+                                                                409 545 723 724 725 
+                                                                750 755 760 834 858 
+                                                                859 862 928 983 1013 
+                                                                1036 1039 
+W. . . . . . . . .  D   ADDR 000083H   A                        129# 257 310 482 
+                                                                569 
+ZATML0 . . . . . .  C   ADDR 000C3BH   R SEG=?CO?ZUC0501        910 914# 
+POZI6. . . . . . .  C   ADDR 000B58H   R SEG=?CO?ZUC0501        749 752# 
+SPADEK . . . . . .  C   ADDR 000AF0H   R SEG=?CO?ZUC0501        674 679 681# 692 
+                                                                
+MWIEKSZN . . . . .  C   ADDR 000A87H   R SEG=?CO?ZUC0501        570 572# 
+DIKIER . . . . . .  D   ADDR 00008BH   A                        143# 271 606 622 
+                                                                669 685 
+DRB. . . . . . . .  D   ADDR 0000C1H   A                        183# 242 378 410 
+                                                                455 536 537 720 722 
+                                                                730 735 740 745 897 
+                                                                898 
+X. . . . . . . . .  D   ADDR 000080H   A                        126# 255 
+NIEKASPAM. . . . .  C   ADDR 000BD0H   R SEG=?CO?ZUC0501        837 840# 
+POZI7. . . . . . .  C   ADDR 000B5FH   R SEG=?CO?ZUC0501        754 757# 
+WZROST . . . . . .  C   ADDR 000AB7H   R SEG=?CO?ZUC0501        611 616 618# 630 
+                                                                
+BEZHIST. . . . . .  C   ADDR 000A3FH   R SEG=?CO?ZUC0501        503 521# 
+DRC. . . . . . . .  D   ADDR 0000C2H   A                        186# 246 816 820 
+                                                                869 873 
+PBST . . . . . . .  D   ADDR 000086H   A                        132# 260 379 444 
+                                                                449 514 518 534 540 
+                                                                845 883 892 992 1007 
+                                                                
+Y. . . . . . . . .  D   ADDR 000081H   A                        127# 
+ROBKROK. . . . . .  C   ADDR 000BE2H   R SEG=?CO?ZUC0501        851 853# 
+KASZATRZ . . . . .  C   ADDR 000BD5H   R SEG=?CO?ZUC0501        842 844# 
+GUZIK0 . . . . . .  C   ADDR 000BB0H   R SEG=?CO?ZUC0501        788 823# 
+PISZPAMV . . . . .  C   ADDR 000CCAH   R SEG=?CO?ZUC0501        549 839 902 988 1019# 
+                                                                
+ZATRZASK . . . . .  C   ADDR 000A4AH   R SEG=?CO?ZUC0501        529 531# 
+POMIAR2. . . . . .  C   ADDR 000A0AH   R SEG=?CO?ZUC0501        484 486# 
+PROBST . . . . . .  D   ADDR 000098H   A                        166# 286 776 810 
+                                                                864 
+STANORC. . . . . .  D   ADDR 000097H   A                        162# 245 387 412 
+                                                                464 819 871 924 
+ADCR . . . . . . .  D   ADDR 0000D1H   A                        189# 234 319 396 
+                                                                421 473 934 1052 
+                                                                
+GUZIK1 . . . . . .  C   ADDR 000B74H   R SEG=?CO?ZUC0501        787 789# 
+POMPROG7 . . . . .  C   ADDR 000A7AH   R SEG=?CO?ZUC0501        560 562# 
+POMIAR3. . . . . .  C   ADDR 000A10H   R SEG=?CO?ZUC0501        489 491# 
+ZATRZ. . . . . . .  D   ADDR 00008AH   A                        136# 343 346 375 
+                                                                438 447 517 538 842 
+                                                                900 955 964 979 997 
+                                                                
+DDRA . . . . . . .  D   ADDR 0000C4H   A                        181# 237 358 927 
+                                                                941 
+PAINT. . . . . . .  C   ADDR 000CFCH   R SEG=?CO?ZUC0501        1057# 1067 
+ZAT1NIE. . . . . .  C   ADDR 000CB4H   R SEG=?CO?ZUC0501        975 996# 
+POTESCIE . . . . .  C   ADDR 000C0DH   R SEG=?CO?ZUC0501        794 798 807 821 829 
+                                                                843 847 852 866 876# 
+                                                                
+POMIAR4. . . . . .  C   ADDR 000A16H   R SEG=?CO?ZUC0501        494 496# 
+OPOZAS . . . . . .  N   NUMB 00000064H                          73# 429 436 
+DLPROBY. . . . . .  N   NUMB 0000000AH                          67# 810 
+KTRLKAS. . . . . .  N   NUMB 00000003H                          64# 825 
+DDRB . . . . . . .  D   ADDR 0000C5H   A                        184# 240 
+PBINT. . . . . . .  C   ADDR 000CFDH   R SEG=?CO?ZUC0501        1059# 1068 
+POMIAR5. . . . . .  C   ADDR 000A1CH   R SEG=?CO?ZUC0501        499 501# 
+FINDOBRY . . . . .  C   ADDR 000A7DH   R SEG=?CO?ZUC0501        485 490 495 500 506 
+                                                                524 565# 
+ZATRZOPC . . . . .  C   ADDR 00092CH   R SEG=?CO?ZUC0501        312# 341 
+DDRC . . . . . . .  D   ADDR 0000C6H   A                        187# 243 817 872 
+                                                                
+WIEKSZ . . . . . .  D   ADDR 00008BH   A                        149# 277 634 702 
+                                                                769 
+PUSCB. . . . . . .  N   NUMB 00000050H                          94# 504 
+TYPDIOD. . . . . .  N   NUMB 00000002H                          62# 78 82 85 137 
+                                                                142 148 217 221 225 
+                                                                265 270 276 577 581 
+                                                                592 600 605 627 644 
+                                                                668 689 762 768 
+KASUJ. . . . . . .  C   ADDR 000BBDH   R SEG=?CO?ZUC0501        826 830# 
+POMIAR6. . . . . .  C   ADDR 000A6DH   R SEG=?CO?ZUC0501        511 517 520 551# 
+                                                                
+POZIOM . . . . . .  D   ADDR 000090H   A                        155# 264 568 623 
+                                                                686 712 715 727 
+POMIAR7. . . . . .  C   ADDR 000A74H   R SEG=?CO?ZUC0501        555 557# 
+CZASPOMB . . . . .  N   NUMB 0000005AH                          77# 259 272 274 280 
+                                                                281 442 513 532 566 
+                                                                582 587 593 594 609 
+                                                                619 621 628 633 672 
+                                                                682 684 690 695 
+SYGPROBY . . . . .  N   NUMB 00000002H                          68# 812 857 
+ZUC05. . . . . . .  N NUMB   -----
+
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE      =    1161    ----
+   DATA SIZE      =    ----    ----
+   BIT SIZE       =    ----    ----
+END OF MODULE INFORMATION.
+
+
+
+ASSEMBLY COMPLETE.   0 WARNING(S)   2 ERROR(S)
