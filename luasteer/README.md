@@ -13,4 +13,4 @@ A known bug, from the header of `LuaVehicle.h`: unary minus on a vector receives
 
 ## Licences
 
-All C++ files carry the MIT-style notice used by OpenSteer. The bindings and the soccer plug-in are copyright 2007 Lukasz Stafiniak. The adapted plug-ins are copyright Sony Computer Entertainment America, original author Craig Reynolds.
+Everything in this folder is under the MIT licence in `LICENSE`, the Lua scripts included. The C++ files also carry the notice in their headers, which is the one OpenSteer uses. The bindings and the soccer plug-in are copyright 2007 Lukasz Stafiniak. The adapted plug-ins are copyright Sony Computer Entertainment America, original author Craig Reynolds.

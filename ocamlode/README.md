@@ -15,7 +15,16 @@ This is not the OCamlODE maintained by Florent Monnier at <https://github.com/fc
 
 ## Licences
 
-As stated in the files: `katamari.ml` is under the GPL, version 2 or later; `ragdoll.ml` is under the LGPL; `pa_ode.ml` is public domain; the files under `ode-0.5/` are ODE's, under the LGPL or a BSD-style licence at the user's choice. The remaining files carry no licence notice.
+The files written by Lukasz Stafiniak are under the MIT licence in `LICENSE`, which lists them: the module files, the C stubs, the drawing bindings and the Makefile.
+
+The other files build on other people's work and keep those terms:
+
+- `ode.ml` is based on Richard Jones's low-level bindings and keeps their terms.
+- `katamari.ml` is by Richard Jones, under the GPL, version 2 or later, as its header says.
+- `ragdoll.ml` is rewritten from a demo by Michael J Mandel, under the LGPL, as its header says.
+- `test_crash.ml` is rewritten from an ODE demo by David Whittaker and follows ODE's terms.
+- `ode-0.5/` and `ode-0.5.patch` are ODE's source and a change to it, under the LGPL or a BSD-style licence at the user's choice.
+- `pa_ode.ml` is public domain, as its header says.
 
 ## Building
 

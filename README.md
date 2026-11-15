@@ -17,7 +17,9 @@ Programs and teaching material by Łukasz Stafiniak from 2003 to 2012, recovered
 
 ## Provenance and licences
 
-Each folder has a README saying what in it is the author's and what it builds on. Each file keeps the licence notice it came with. Files that carry no notice have no licence assigned yet.
+Each folder has a README saying what in it is the author's and what it builds on. Each file keeps the licence notice it came with.
+
+`luasteer` and the author's own files in `ocamlode` are under the MIT licence; see the `LICENSE` file in each. `pmwiki-mode` is under the GPL. The other folders have no licence: they may be read, and using the code needs permission.
 
 Other people's material that sat beside these files is not included: textbook example code, other lecturers' slides, bundled libraries, datasets and papers.
 
